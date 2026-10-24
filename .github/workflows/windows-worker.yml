@@ -68,9 +68,13 @@ jobs:
             if (-not $lines) { Write-Host "::error title=selftest::no output at all: the exe did not start (exit $code; missing DLL? run 'dumpbin /dependents')" }
             exit 1
           }
-          $dp = & .\kangaroo.exe --pubkey 030d282cf2ff536d2c42f105d0b8588821a915dc3f9a05bd98bb23af67a2e92a5b --start 0 --range 36 --cpu --threads 2 --species tame --dpstream --dp 6 --time 5 --report 999 2>&1 | Select-String "^DP " | Measure-Object | Select-Object -ExpandProperty Count
-          Write-Host "tame-only streamed $dp DPs"
-          if ($dp -lt 10) { Write-Error "no DP stream"; exit 1 }
+          $sl = & .\kangaroo.exe --pubkey 030d282cf2ff536d2c42f105d0b8588821a915dc3f9a05bd98bb23af67a2e92a5b --start 0 --range 36 --cpu --threads 2 --species tame --dpstream --dp 6 --time 5 --report 999 2>&1 | ForEach-Object { "$_" }
+          $scode = $LASTEXITCODE
+          $dp = @($sl | Where-Object { $_ -match "^DP " }).Count
+          Write-Host "tame-only streamed $dp DPs (exit $scode, $($sl.Count) lines)"
+          Write-Host "::notice title=dp stream::$dp DP lines, exit $scode, $($sl.Count) lines total"
+          foreach ($l in ($sl | Where-Object { $_ -notmatch "^DP " } | Select-Object -First 12)) { Write-Host "::notice title=dp stream output::$l" }
+          if ($dp -lt 10) { Write-Host "::error title=dp stream::fewer than 10 DP lines"; exit 1 }
       - name: Build KovaPool.exe
         shell: pwsh
         working-directory: pool/windows
