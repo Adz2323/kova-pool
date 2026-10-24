@@ -30,18 +30,25 @@ jobs:
         shell: pwsh
         working-directory: build
         run: |
-          $ErrorActionPreference = "Stop"
           $G = @(); foreach ($a in 86, 89, 90, 100, 120) { $G += "-gencode"; $G += "arch=compute_$a,code=sm_$a" }
           $C = @("-O3", "-std=c++17", "-diag-suppress", "20014,20011", "--ptxas-options=-O3") + $G
-          nvcc @C -DCC_EOMUL -I. -Ikangaroo -c kangaroo/kangaroo.cu -o kangaroo.obj
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          nvcc @C -Ikangaroo/rc -c kangaroo/rc/RCGpuCore.cu -o RCGpuCore.obj
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          nvcc @C -Ikangaroo/rc -c kangaroo/rc/rc_glue.cu -o rc_glue.obj
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # run each nvcc step; on failure, surface the compiler's error lines as annotations (readable through the API)
+          function Step($name, $cmdArgs) {
+            Write-Host "== $name"
+            $out = & nvcc @cmdArgs 2>&1 | ForEach-Object { "$_" }
+            $out | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE) {
+              $errs = $out | Where-Object { $_ -match "error|fatal|undefined|cannot" } | Select-Object -First 40
+              if (-not $errs) { $errs = $out | Select-Object -Last 40 }
+              foreach ($e in $errs) { Write-Host "::error title=$name::$($e -replace '[\r\n]',' ')" }
+              exit $LASTEXITCODE
+            }
+          }
+          Step "compile kangaroo.cu" ($C + @("-DCC_EOMUL", "-I.", "-Ikangaroo", "-c", "kangaroo/kangaroo.cu", "-o", "kangaroo.obj"))
+          Step "compile RCGpuCore.cu" ($C + @("-Ikangaroo/rc", "-c", "kangaroo/rc/RCGpuCore.cu", "-o", "RCGpuCore.obj"))
+          Step "compile rc_glue.cu" ($C + @("-Ikangaroo/rc", "-c", "kangaroo/rc/rc_glue.cu", "-o", "rc_glue.obj"))
           # delay-load the driver DLL so the exe starts (and --cpu works) on a machine without an NVIDIA driver
-          nvcc -O3 -std=c++17 @G kangaroo.obj RCGpuCore.obj rc_glue.obj -lcuda -Xlinker /DELAYLOAD:nvcuda.dll -Xlinker delayimp.lib -o kangaroo.exe
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Step "link kangaroo.exe" (@("-O3", "-std=c++17") + $G + @("kangaroo.obj", "RCGpuCore.obj", "rc_glue.obj", "-lcuda", "-Xlinker", "/DELAYLOAD:nvcuda.dll", "-Xlinker", "delayimp.lib", "-o", "kangaroo.exe"))
           Get-Item kangaroo.exe | Format-List Name, Length
       - name: Self-test on the CPU (no GPU on the runner)
         shell: pwsh
