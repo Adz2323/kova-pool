@@ -1,0 +1,7 @@
+*.o
+*.obj
+*.exe
+build/
+dist/
+__pycache__/
+kangaroo/kangaroo

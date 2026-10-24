@@ -1,0 +1,83 @@
+# Builds the native Windows worker: kangaroo.exe (CUDA, from the same kangaroo.cu as the Linux image, via
+# pool/windows/winpatch.py's build-time 128-bit shim) + KovaPool.exe (Go tray app), and publishes both as the assets of
+# the rolling GitHub release "windows-latest". KovaPool downloads kangaroo.exe from that release on first run, so a
+# Windows PC needs no Docker Desktop. Runs on pushes that touch the solver or the Windows app, or by hand.
+name: windows-worker
+on:
+  push:
+    branches: [main]
+    paths: ["kangaroo/**", "CUDAMath.h", "fmul32.h", "pool/windows/**", ".github/workflows/windows-worker.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1          # cl.exe on PATH: nvcc's host compiler on Windows
+      - uses: Jimver/cuda-toolkit@v0.2.36
+        id: cuda
+        with:
+          cuda: "12.8.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22" }
+      - name: Patch a copy of the sources for MSVC
+        run: python pool/windows/winpatch.py . build
+      - name: Compile kangaroo.exe
+        shell: pwsh
+        working-directory: build
+        run: |
+          $ErrorActionPreference = "Stop"
+          $G = @(); foreach ($a in 86, 89, 90, 100, 120) { $G += "-gencode"; $G += "arch=compute_$a,code=sm_$a" }
+          $C = @("-O3", "-std=c++17", "-diag-suppress", "20014,20011", "--ptxas-options=-O3") + $G
+          nvcc @C -DCC_EOMUL -I. -Ikangaroo -c kangaroo/kangaroo.cu -o kangaroo.obj
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          nvcc @C -Ikangaroo/rc -c kangaroo/rc/RCGpuCore.cu -o RCGpuCore.obj
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          nvcc @C -Ikangaroo/rc -c kangaroo/rc/rc_glue.cu -o rc_glue.obj
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # delay-load the driver DLL so the exe starts (and --cpu works) on a machine without an NVIDIA driver
+          nvcc -O3 -std=c++17 @G kangaroo.obj RCGpuCore.obj rc_glue.obj -lcuda -Xlinker /DELAYLOAD:nvcuda.dll -Xlinker delayimp.lib -o kangaroo.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Item kangaroo.exe | Format-List Name, Length
+      - name: Self-test on the CPU (no GPU on the runner)
+        shell: pwsh
+        working-directory: build
+        run: |
+          $out = & .\kangaroo.exe --selftest --range 26 --cpu --threads 2 --seed 1 --report 999 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch "KEY FOUND") { Write-Error "selftest did not find the key"; exit 1 }
+          $dp = & .\kangaroo.exe --pubkey 030d282cf2ff536d2c42f105d0b8588821a915dc3f9a05bd98bb23af67a2e92a5b --start 0 --range 36 --cpu --threads 2 --species tame --dpstream --dp 6 --time 5 --report 999 2>&1 | Select-String "^DP " | Measure-Object | Select-Object -ExpandProperty Count
+          Write-Host "tame-only streamed $dp DPs"
+          if ($dp -lt 10) { Write-Error "no DP stream"; exit 1 }
+      - name: Build KovaPool.exe
+        shell: pwsh
+        working-directory: pool/windows
+        run: go build -ldflags "-H windowsgui -s -w -X main.buildSHA=${{ github.sha }}" -o ../../build/KovaPool.exe .
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build/kangaroo.exe dist/
+          Copy-Item build/KovaPool.exe dist/
+          New-Item -ItemType Directory -Force dist/rc | Out-Null
+          Copy-Item build/kangaroo/rc/kernel_sm89.cubin, build/kangaroo/rc/kernel_sm89_sqr.cubin, build/kangaroo/rc/kernel_sm120.cubin, build/kangaroo/rc/LICENSE.TXT dist/rc/
+          Compress-Archive -Path dist/kangaroo.exe, dist/rc -DestinationPath dist/kangaroo-windows.zip -Force
+          "${{ github.sha }}" | Out-File -NoNewline dist/VERSION.txt
+          Get-ChildItem -Recurse dist | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with: { name: kova-pool-windows, path: dist/ }
+      - name: Publish to the rolling release "windows-latest"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          name: Windows worker (latest)
+          body: "Built from ${{ github.sha }}. KovaPool.exe: the tray app (downloads kangaroo-windows.zip itself on first run). kangaroo-windows.zip: the solver for people who want to run it by hand."
+          prerelease: true
+          files: |
+            dist/KovaPool.exe
+            dist/kangaroo-windows.zip
+            dist/VERSION.txt
