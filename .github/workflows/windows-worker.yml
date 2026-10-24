@@ -50,13 +50,24 @@ jobs:
           # delay-load the driver DLL so the exe starts (and --cpu works) on a machine without an NVIDIA driver
           Step "link kangaroo.exe" (@("-O3", "-std=c++17") + $G + @("kangaroo.obj", "RCGpuCore.obj", "rc_glue.obj", "-lcuda", "-Xlinker", "/DELAYLOAD:nvcuda.dll", "-Xlinker", "delayimp.lib", "-o", "kangaroo.exe"))
           Get-Item kangaroo.exe | Format-List Name, Length
+          $deps = & dumpbin /dependents kangaroo.exe 2>&1 | Select-String "\.dll" | ForEach-Object { $_.ToString().Trim() }
+          Write-Host "::notice title=kangaroo.exe DLL dependencies::$($deps -join ', ')"
+          $delay = & dumpbin /dependents kangaroo.exe 2>&1 | Select-String -Context 0,6 "delay load" | Out-String
+          Write-Host "::notice title=delay-load section::$($delay -replace '[\r\n]+',' ')"
       - name: Self-test on the CPU (no GPU on the runner)
         shell: pwsh
         working-directory: build
         run: |
-          $out = & .\kangaroo.exe --selftest --range 26 --cpu --threads 2 --seed 1 --report 999 2>&1 | Out-String
-          Write-Host $out
-          if ($out -notmatch "KEY FOUND") { Write-Error "selftest did not find the key"; exit 1 }
+          $lines = & .\kangaroo.exe --selftest --range 26 --cpu --threads 2 --seed 1 --report 999 2>&1 | ForEach-Object { "$_" }
+          $code = $LASTEXITCODE
+          $lines | ForEach-Object { Write-Host $_ }
+          Write-Host "::notice title=selftest exit code::$code ($($lines.Count) lines of output)"
+          $out = $lines -join "`n"
+          if ($out -notmatch "KEY FOUND") {
+            foreach ($l in ($lines | Select-Object -First 25)) { Write-Host "::error title=selftest output::$l" }
+            if (-not $lines) { Write-Host "::error title=selftest::no output at all: the exe did not start (exit $code; missing DLL? run 'dumpbin /dependents')" }
+            exit 1
+          }
           $dp = & .\kangaroo.exe --pubkey 030d282cf2ff536d2c42f105d0b8588821a915dc3f9a05bd98bb23af67a2e92a5b --start 0 --range 36 --cpu --threads 2 --species tame --dpstream --dp 6 --time 5 --report 999 2>&1 | Select-String "^DP " | Measure-Object | Select-Object -ExpandProperty Count
           Write-Host "tame-only streamed $dp DPs"
           if ($dp -lt 10) { Write-Error "no DP stream"; exit 1 }
