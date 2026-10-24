@@ -75,6 +75,7 @@ jobs:
           Write-Host "::notice title=dp stream::$dp DP lines, exit $scode, $($sl.Count) lines total"
           foreach ($l in ($sl | Where-Object { $_ -notmatch "^DP " } | Select-Object -First 12)) { Write-Host "::notice title=dp stream output::$l" }
           if ($dp -lt 10) { Write-Host "::error title=dp stream::fewer than 10 DP lines"; exit 1 }
+          exit 0   # the timed run exits 2 ("stopped without finding the key"), which is expected here
       - name: Build KovaPool.exe
         shell: pwsh
         working-directory: pool/windows
