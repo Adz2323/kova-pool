@@ -90,4 +90,8 @@ inline int kp_setenv(const char* k, const char* v, int) { return _putenv_s(k, v)
 inline int kp_unsetenv(const char* k) { return _putenv_s(k, ""); }
 #define setenv kp_setenv
 #define unsetenv kp_unsetenv
+// host-side atomic add (GCC builtin) used by the CPU walk's DP/loop counters
+inline unsigned kp_atomic_fetch_add_u32(volatile unsigned* p, unsigned v) { return (unsigned)_InterlockedExchangeAdd((volatile long*)p, (long)v); }
+#define __ATOMIC_RELAXED 0
+#define __atomic_fetch_add(p, v, order) kp_atomic_fetch_add_u32((volatile unsigned*)(p), (unsigned)(v))
 #endif
