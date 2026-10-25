@@ -19,9 +19,9 @@ What's here:
 Make a token on your account page at pool.kova23.com, then:
 
 - **Linux:** `curl -fsSL https://pool.kova23.com/join.sh | sudo bash -s -- pk_YOURTOKEN`
-  (or `docker run -d --gpus all --restart unless-stopped -e POOL_TOKEN=pk_… adz23/kova-pool:2`)
+  (or `docker run -d --gpus all --restart unless-stopped -e POOL_TOKEN=pk_… adz23/kova-pool:3`)
 - **Windows:** download `KovaPool.exe` from the latest `windows-latest` release, run it, paste the token.
-- **RunPod / Vast.ai:** a pod with image `adz23/kova-pool:2` and env `POOL_TOKEN`.
+- **RunPod / Vast.ai:** a pod with image `adz23/kova-pool:3` and env `POOL_TOKEN`.
 
 ## What the worker does, and doesn't
 

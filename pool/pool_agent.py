@@ -30,6 +30,9 @@ RC_MODE = os.environ.get("KANG_RC", "auto")
 HEARTBEAT_S = float(os.environ.get("HEARTBEAT_S", "15"))
 CAP_PERCENT = int(os.environ.get("POWER_CAP_PERCENT", "60"))
 BATCH_MAX = 5000; BATCH_S = 2.0; QUEUE_MAX = 2_000_000
+STARTUP_S = float(os.environ.get("STARTUP_TIMEOUT_S", "120"))   # no stats line from the solver within this -> this host is bad: exit
+MIN_GJPS = float(os.environ.get("MIN_GJPS", "0"))                # after warm-up, below this many G jumps/s for 60 s -> exit (0 = off)
+EXIT_BAD_HOST = 3                                                # exit code: the orchestrator (Salad/RunPod/Docker restart) replaces the host
 DUTY_ON, DUTY_OFF = 3.0, 2.0
 T0 = time.time()
 
@@ -45,6 +48,8 @@ def call(path, payload=None, timeout=20):
         try: body = json.loads(e.read() or b"{}")
         except Exception: body = {}
         return e.code, body
+    except Exception as e:                 # unreachable / timeout / DNS: report as code 0, callers retry
+        return 0, {"error": str(e)}
 
 st_lock = threading.Lock()
 st = {"per": {}, "job": None, "found": False, "power": "full", "mode": "pooled", "sent": 0, "dropped": 0, "stale": 0, "suspended": ""}
@@ -56,6 +61,20 @@ def gpu_list():
         out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, timeout=30).stdout.strip().splitlines()
         return [x.strip() for x in out if x.strip()] or ["?"]
     except Exception: return ["?"]
+
+def host_info():
+    """driver / host details for the log: when a host misbehaves this is what tells the bad ones apart"""
+    if CPU_MODE: return "cpu test mode"
+    try:
+        q = subprocess.run(["nvidia-smi", "--query-gpu=driver_version,pci.bus_id,memory.total,power.limit,clocks.max.sm", "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=30).stdout.strip().replace("\n", " | ")
+        return f"driver/bus/mem/power/clock: {q}"
+    except Exception as e: return f"nvidia-smi unavailable ({e})"
+
+def bad_host(procs, why):
+    """leave with a distinct exit code so the orchestrator replaces this host; faster than running slow or hung"""
+    log(f"BAD HOST: {why}. Exiting so this machine gets replaced (exit {EXIT_BAD_HOST}).")
+    stop(procs); sys.exit(EXIT_BAD_HOST)
 
 def fetch_job():
     while True:
@@ -170,6 +189,7 @@ def start(job, gpus):
         if not CPU_MODE and RC_MODE != "off" and "--rc" not in EXTRA: cmd += ["--rc", RC_MODE]
         cmd += EXTRA
         log(f"GPU {idx}: " + " ".join(shlex.quote(c) for c in cmd))
+        if not CPU_MODE and os.path.exists("/usr/bin/stdbuf"): cmd = ["/usr/bin/stdbuf", "-oL"] + cmd   # line-buffered: start-up lines show at once
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=APP)
         threading.Thread(target=reader, args=(idx, p), daemon=True).start()
         procs.append(p)
@@ -205,6 +225,8 @@ def main():
     if not os.path.exists(BIN) and not CPU_MODE: log(f"kangaroo binary not found at {BIN}"); sys.exit(2)
     gpus = gpu_list()
     log(f"pool {POOL_URL} | token {TOKEN[:10]}... | {len(gpus)} GPU(s): {', '.join(gpus)}")
+    log(host_info())
+    if STARTUP_S: log(f"watchdog: solver must report within {STARTUP_S:.0f} s" + (f", then sustain {MIN_GJPS:g} G jumps/s" if MIN_GJPS else ""))
     threading.Thread(target=heartbeat_loop, args=(gpus,), daemon=True).start()
     threading.Thread(target=dp_loop, daemon=True).start()
     job = fetch_job()
@@ -214,10 +236,20 @@ def main():
             f"mode {job.get('mode')} | power {job.get('power')} | job {job['version']}")
         procs = start(job, gpus)
         apply_power(job.get("power", "full"), procs)
-        switched = False
+        switched = False; t_start = time.time(); slow_since = None
         while any(p.poll() is None for p in procs):
             time.sleep(2)
-            with st_lock: hb = dict(st.get("hb") or {}); found = st["found"]; susp = st["suspended"]
+            with st_lock:
+                hb = dict(st.get("hb") or {}); found = st["found"]; susp = st["suspended"]
+                jps = sum(v.get("jumps", 0) for v in st["per"].values()); reported = bool(st["per"])
+            # watchdog: a host whose solver never reports, or runs far below par, is replaced rather than tolerated
+            if STARTUP_S and not reported and time.time() - t_start > STARTUP_S and not st.get("power") == "idle":
+                bad_host(procs, f"no stats from the solver after {STARTUP_S:.0f} s (hung at start-up; GPU/driver problem on this host)")
+            if MIN_GJPS and reported and time.time() - t_start > 180 and st.get("power") == "full":
+                if jps < MIN_GJPS * 1e9:
+                    slow_since = slow_since or time.time()
+                    if time.time() - slow_since > 60: bad_host(procs, f"{jps / 1e9:.2f} G jumps/s, below the MIN_GJPS floor of {MIN_GJPS:g}")
+                else: slow_since = None
             if susp:
                 log(f"token suspended by the pool ({susp}): stopping. Fix it on your account page; retrying in 5 min")
                 stop(procs); time.sleep(300); job = fetch_job(); switched = True; break
