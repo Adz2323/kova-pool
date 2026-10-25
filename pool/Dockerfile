@@ -3,8 +3,8 @@
 # the pool, which forwards them into the herd's table; the pool's server derives any key. There is nothing secret in
 # this image: no console address, no fleet token, no find key.
 # Build from the REPO ROOT (needs kangaroo/, CUDAMath.h, fmul32.h, pool/pool_agent.py):
-#   docker build -f pool/Dockerfile -t adz23/kova-pool:3 . && docker push adz23/kova-pool:3
-# Run:  docker run -d --gpus all --restart unless-stopped -e POOL_TOKEN=pk_... adz23/kova-pool:3
+#   docker build -f pool/Dockerfile -t adz23/kova-pool:4 . && docker push adz23/kova-pool:4
+# Run:  docker run -d --gpus all --restart unless-stopped -e POOL_TOKEN=pk_... adz23/kova-pool:4
 #   (power modes "gentle"/"idle" need --cap-add SYS_ADMIN for the GPU power cap; otherwise the agent uses a duty cycle)
 # RCKangaroo's turbo kernels (RetiredCoder, GPLv3) ship in /app/rc with their source, as the licence asks.
 ARG CUDA_VERSION=12.8.1

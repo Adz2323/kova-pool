@@ -71,10 +71,21 @@ def host_info():
         return f"driver/bus/mem/power/clock: {q}"
     except Exception as e: return f"nvidia-smi unavailable ({e})"
 
+def salad_reallocate(why):
+    """Salad restarts an exited container on the SAME machine; its metadata service has a call that moves it instead"""
+    if not os.environ.get("SALAD_MACHINE_ID"): return False
+    try:
+        req = urllib.request.Request("http://169.254.169.254/v1/reallocate", data=json.dumps({"Reason": why[:200]}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "Metadata": "true"})
+        with urllib.request.urlopen(req, timeout=10) as r: r.read()
+        log("asked Salad to reallocate this container to another machine"); return True
+    except Exception as e:
+        log(f"Salad reallocate call failed ({e}); exiting anyway"); return False
+
 def bad_host(procs, why):
     """leave with a distinct exit code so the orchestrator replaces this host; faster than running slow or hung"""
     log(f"BAD HOST: {why}. Exiting so this machine gets replaced (exit {EXIT_BAD_HOST}).")
-    stop(procs); sys.exit(EXIT_BAD_HOST)
+    stop(procs); salad_reallocate(why); time.sleep(3); sys.exit(EXIT_BAD_HOST)
 
 def fetch_job():
     while True:
