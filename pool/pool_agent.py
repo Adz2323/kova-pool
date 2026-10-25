@@ -27,6 +27,7 @@ BIN = os.environ.get("KANG_BIN", os.path.join(APP, "kangaroo"))
 CPU_MODE = os.environ.get("KANG_CPU", "0") == "1"
 EXTRA = shlex.split(os.environ.get("KANG_ARGS", ""))
 RC_MODE = os.environ.get("KANG_RC", "auto")
+CUBIN_URL = os.environ.get("KANG_CUBIN_URL", "")   # test a kernel build without a new image: downloaded once, passed as --rc-cubin
 HEARTBEAT_S = float(os.environ.get("HEARTBEAT_S", "15"))
 CAP_PERCENT = int(os.environ.get("POWER_CAP_PERCENT", "60"))
 BATCH_MAX = 5000; BATCH_S = 2.0; QUEUE_MAX = 2_000_000
@@ -240,6 +241,12 @@ def main():
     if not os.path.exists(BIN) and not CPU_MODE: log(f"kangaroo binary not found at {BIN}"); sys.exit(2)
     gpus = gpu_list()
     log(f"pool {POOL_URL} | token {TOKEN[:10]}... | {len(gpus)} GPU(s): {', '.join(gpus)}")
+    if CUBIN_URL and not CPU_MODE:
+        dst = os.path.join(APP, "rc", "override.cubin")
+        try:
+            with urllib.request.urlopen(CUBIN_URL, timeout=60) as r, open(dst, "wb") as f: f.write(r.read())
+            EXTRA.extend(["--rc-cubin", dst]); log(f"kernel override: {CUBIN_URL} -> {dst} ({os.path.getsize(dst)} B)")
+        except Exception as e: log(f"KANG_CUBIN_URL download failed ({e}); using the image's cubin")
     log(host_info())
     if STARTUP_S: log(f"watchdog: solver must report within {STARTUP_S:.0f} s" + (f", then sustain {MIN_GJPS:g} G jumps/s" if MIN_GJPS else ""))
     threading.Thread(target=heartbeat_loop, args=(gpus,), daemon=True).start()
