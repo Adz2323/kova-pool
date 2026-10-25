@@ -85,6 +85,8 @@ def salad_reallocate(why):
 def bad_host(procs, why):
     """leave with a distinct exit code so the orchestrator replaces this host; faster than running slow or hung"""
     log(f"BAD HOST: {why}. Exiting so this machine gets replaced (exit {EXIT_BAD_HOST}).")
+    try: call("/api/worker/badhost", {"why": why[:300], "host": host_info()[:300], "gpus": gpu_list(), "machine": os.environ.get("SALAD_MACHINE_ID", "")[:64]}, timeout=10)
+    except Exception: pass
     stop(procs); salad_reallocate(why); time.sleep(3); sys.exit(EXIT_BAD_HOST)
 
 def fetch_job():
@@ -220,7 +222,9 @@ def heartbeat_loop(gpus):
         with st_lock:
             jps = sum(v.get("jumps", 0) for v in st["per"].values())
             kangs = sum(v.get("kangs", 0) for v in st["per"].values()); loops = sum(v.get("loops", 0) for v in st["per"].values())
-        code, r = call("/api/worker/heartbeat", {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops})
+        hb_payload = {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops}
+        if time.time() - T0 < 2 * HEARTBEAT_S: hb_payload["host"] = host_info()[:300]; hb_payload["machine"] = os.environ.get("SALAD_MACHINE_ID", "")[:64]
+        code, r = call("/api/worker/heartbeat", hb_payload)
         if code == 200:
             with st_lock:
                 st["hb"] = r
