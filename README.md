@@ -2,7 +2,7 @@
 
 The open-source worker for [pool.kova23.com](https://pool.kova23.com): a pooled Pollard-kangaroo search for the key
 behind a Bitcoin puzzle public key, run as one herd across everyone's GPUs. This repository holds everything that runs
-on a member's machine; the pool server (accounts, verification, shares, payouts) is separate.
+on a member's machine; the pool server (accounts, verification, shares) is separate; the payout script is here so the split can be checked.
 
 What's here:
 
@@ -12,6 +12,7 @@ What's here:
 | `kangaroo/rc/` | RetiredCoder's RCKangaroo turbo kernels (GPLv3) used by `--rc`, with their source |
 | `pool/pool_agent.py`, `pool/Dockerfile` | the Linux worker: fetches the job, runs the solver, streams DPs, heartbeats. Image `adz23/kova-pool` |
 | `pool/windows/` | KovaPool for Windows: tray app, idle-only and gentle modes; runs `kangaroo.exe` natively or via Docker Desktop |
+| `pool/payout_electrum.py` | how a find is paid out: the share ledger → an Electrum pay-to-many list plus the public ledger that is published with the txid. The same script the operator runs, so you can check the split |
 | `.github/workflows/windows-worker.yml` | builds `kangaroo.exe` + `KovaPool.exe` and publishes them on the release `windows-latest` |
 
 ## Run it
