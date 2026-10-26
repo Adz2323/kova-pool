@@ -1,7 +1,7 @@
 // phone-worker.js: one Web Worker = one group of 24 kangaroos in kangaroo.wasm (kangaroo/cpu/kangaroo_wasm.cpp).
-// Messages in:  {type:"start", job, species, seed}   {type:"stop"}
+// Messages in:  {type:"start", job, species (0 tame, 1 wild, 2 both), seed}   {type:"stop"}
 // Messages out: {type:"ready"} {type:"stats", jumps, loops, regen} {type:"dps", lines:[...]} {type:"error", text}
-let ex = null, running = false, shareMask = 0n, typeCh = "0", jumps = 0;
+let ex = null, running = false, shareMask = 0n, nt = 24, jumps = 0;
 const hex = v => v.toString(16).padStart(16, "0");
 const words = (hexStr, off, mem) => { const v = BigInt("0x" + hexStr); for (let i = 0; i < 4; i++) mem[off + i] = (v >> BigInt(64 * i)) & 0xFFFFFFFFFFFFFFFFn; };
 async function load() {
@@ -19,7 +19,7 @@ function start(job, species, seed) {
   shareMask = share > cand ? (1n << BigInt(share - cand)) - 1n : 0n;
   const rc = ex.kw_init(Number(job.range), cand, species, BigInt(seed[0]), BigInt(seed[1]));
   if (rc) { postMessage({ type: "error", text: "init failed (" + rc + ")" }); return; }
-  typeCh = species === 1 ? "1" : "0"; running = true; jumps = 0; loop();
+  nt = ex.kw_nt(); running = true; jumps = 0; loop();
 }
 function loop() {
   if (!running) return;
@@ -30,7 +30,7 @@ function loop() {
     for (let i = 0; i < n; i++) {
       const o = o0 + 6 * i; const x0 = mem[o];
       if (shareMask && (x0 & shareMask)) continue;        // a candidate, not a share point
-      lines.push(hex(x0) + hex(mem[o + 1]) + hex(mem[o + 4]) + hex(mem[o + 3]) + hex(mem[o + 2]) + typeCh);
+      lines.push(hex(x0) + hex(mem[o + 1]) + hex(mem[o + 4]) + hex(mem[o + 3]) + hex(mem[o + 2]) + (Number(mem[o + 5] & 0xFFFFFFFFn) < nt ? "0" : "1"));
     }
   }
   if (lines.length) postMessage({ type: "dps", lines });

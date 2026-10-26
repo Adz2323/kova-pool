@@ -48,7 +48,7 @@ a{color:var(--tame)}
     <div class="status" id="status">Idle. The search runs only while this page is open; the screen can be dimmed but not locked.</div>
     <div class="stats" id="stats" style="display:none">
       <div class="stat t"><b id="s-jps">0</b><span>jumps per second</span></div>
-      <div class="stat w"><b id="s-dps">0</b><span>points handed in</span></div>
+      <div class="stat w"><b id="s-dps">0</b><span id="s-dps-l">points handed in</span></div>
       <div class="stat"><b id="s-up">0:00</b><span>running</span></div>
       <div class="stat"><b id="s-sp">—</b><span>species</span></div>
     </div>
@@ -65,7 +65,7 @@ for (let i = 1; i <= Math.min(N, 16); i++) { const o = document.createElement("o
 cores.value = String(Math.max(1, Math.min(N - 1, 8))); $("#cores-note").textContent = `of ${N} this device reports`;
 try { tok.value = localStorage.getItem("kova_token") || new URLSearchParams(location.search).get("t") || ""; cores.value = localStorage.getItem("kova_cores") || cores.value; } catch (e) {}
 const say = (t, k = "") => { status.textContent = t; status.className = "status " + k; };
-if (TEST) { document.querySelector("h1").textContent = "Phone test"; document.querySelector(".wrap > p").textContent = `Test mode: this page will pick a random ${Math.max(24, Math.min(64, TEST))}-bit key and let the phone's own kangaroos find it, with no pool involved. If the key comes out, the phone's kangaroos are correct.`; document.querySelector('label[for="tok"]').style.display = "none"; tok.style.display = "none"; tok.nextElementSibling.style.display = "none"; go.textContent = "Run test"; }
+if (TEST) { document.querySelector("h1").textContent = "Phone test"; document.querySelector(".wrap > p").textContent = `Test mode: this page will pick a random ${Math.max(24, Math.min(64, TEST))}-bit key and let the phone's own kangaroos find it, with no pool involved. If the key comes out, the phone's kangaroos are correct.`; document.querySelector('label[for="tok"]').style.display = "none"; tok.style.display = "none"; tok.nextElementSibling.style.display = "none"; go.textContent = "Run test"; $("#s-dps-l").textContent = "points found"; }
 const logln = t => { log.textContent = (new Date().toTimeString().slice(0, 8) + " " + t + "\n" + log.textContent).slice(0, 4000); };
 const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(2) + " G" : v >= 1e6 ? (v / 1e6).toFixed(2) + " M" : v >= 1e3 ? (v / 1e3).toFixed(1) + " K" : String(Math.round(v));
 let workers = [], job = null, running = false, t0 = 0, queue = [], sent = 0, rates = {}, loopsPer = {}, kangs = 0, timers = [], wake = null;
@@ -124,7 +124,7 @@ async function start() {
     const n = parseInt(cores.value, 10) || 1; kangs = 24 * n;
     $("#s-sp").innerHTML = `<span class="pill">tame</span> + <span class="pill w">wild</span>`;
     logln(`test: random ${job.range}-bit key ${test.k.toString(16)}, dp ${job.dp}, ${n} worker${n > 1 ? "s" : ""}; expected about ${(1.15 * 2 ** (job.range / 2) / 1e6).toFixed(1)} M jumps`);
-    for (let i = 0; i < n; i++) spawn(i, i % 2);
+    for (let i = 0; i < n; i++) spawn(i, 2);
     go.style.display = "none"; stopB.style.display = ""; $("#stats").style.display = "";
     timers = [setInterval(tick, 1000)]; try { wake = await navigator.wakeLock.request("screen"); } catch (e) {}
     say(`Test running: solving a ${job.range}-bit key on this phone…`, "ok"); return;
@@ -138,7 +138,7 @@ async function start() {
   const sp = j.species === "wild" ? 1 : 0;
   $("#s-sp").innerHTML = j.species === "both" ? `<span class="pill">tame</span> + <span class="pill w">wild</span>` : `<span class="pill${sp ? " w" : ""}">${j.species}</span>`;
   logln(`job ${j.version}: puzzle ${j.puzzle || "?"}, range 2^${j.range}, dp ${j.cand_dp || j.dp} (share points dp ${j.share_dp || j.dp}), species ${j.species}`);
-  for (let i = 0; i < n; i++) spawn(i, j.species === "both" ? (i % 2) : sp);
+  for (let i = 0; i < n; i++) spawn(i, j.species === "both" ? 2 : sp);
   go.style.display = "none"; stopB.style.display = ""; $("#stats").style.display = "";
   timers = [setInterval(flush, 2000), setInterval(heartbeat, 15000), setInterval(tick, 1000)];
   try { wake = await navigator.wakeLock.request("screen"); } catch (e) {}
@@ -151,7 +151,7 @@ function spawn(i, species) {
     const m = e.data;
     if (m.type === "ready") { w.postMessage({ type: "start", job, species, seed: [seed[0].toString(), seed[1].toString()] }); }
     else if (m.type === "stats") { rates[i] = { jumps: m.jumps, t: Date.now() }; loopsPer[i] = m.loops; }
-    else if (m.type === "dps") { if (TEST) testLines(m.lines); else queue.push(...m.lines); }
+    else if (m.type === "dps") { if (TEST) { sent += m.lines.length; testLines(m.lines); } else queue.push(...m.lines); }
     else if (m.type === "error") { logln("worker " + i + ": " + m.text); say("Worker error: " + m.text, "bad"); }
   };
   w.onerror = err => { logln("worker " + i + " failed: " + err.message); };
