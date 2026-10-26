@@ -58,12 +58,14 @@ a{color:var(--tame)}
 </div>
 <script>
 const $ = s => document.querySelector(s);
+const TEST = parseInt(new URLSearchParams(location.search).get("test") || "0", 10);
 const tok = $("#tok"), cores = $("#cores"), go = $("#go"), stopB = $("#stop"), status = $("#status"), log = $("#log");
 const N = Math.max(1, navigator.hardwareConcurrency || 2);
 for (let i = 1; i <= Math.min(N, 16); i++) { const o = document.createElement("option"); o.value = i; o.textContent = i + (i === 1 ? " core" : " cores"); cores.appendChild(o); }
 cores.value = String(Math.max(1, Math.min(N - 1, 8))); $("#cores-note").textContent = `of ${N} this device reports`;
 try { tok.value = localStorage.getItem("kova_token") || new URLSearchParams(location.search).get("t") || ""; cores.value = localStorage.getItem("kova_cores") || cores.value; } catch (e) {}
 const say = (t, k = "") => { status.textContent = t; status.className = "status " + k; };
+if (TEST) { document.querySelector("h1").textContent = "Phone test"; document.querySelector(".wrap > p").textContent = `Test mode: this page will pick a random ${Math.max(24, Math.min(64, TEST))}-bit key and let the phone's own kangaroos find it, with no pool involved. If the key comes out, the phone's kangaroos are correct.`; document.querySelector('label[for="tok"]').style.display = "none"; tok.style.display = "none"; tok.nextElementSibling.style.display = "none"; go.textContent = "Run test"; }
 const logln = t => { log.textContent = (new Date().toTimeString().slice(0, 8) + " " + t + "\n" + log.textContent).slice(0, 4000); };
 const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(2) + " G" : v >= 1e6 ? (v / 1e6).toFixed(2) + " M" : v >= 1e3 ? (v / 1e3).toFixed(1) + " K" : String(Math.round(v));
 let workers = [], job = null, running = false, t0 = 0, queue = [], sent = 0, rates = {}, loopsPer = {}, kangs = 0, timers = [], wake = null;
@@ -73,8 +75,60 @@ async function api(path, body) {
   let j = {}; try { j = await r.json(); } catch (e) {}
   return [r.status, j];
 }
+// ---- test mode (?test=BITS): a random key of BITS bits, solved in this browser alone: half the workers tame, half wild,
+// the collision resolved here with BigInt maths (the pool is not involved). Proves the phone's kangaroos really work.
+const EC = (() => {
+  const P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2Fn, N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+  const G = [0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n, 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n];
+  const mod = (a, m) => ((a % m) + m) % m;
+  const inv = (a, m) => { let [g, x, y, u, v] = [mod(a, m), 1n, 0n, m, 0n]; let [r0, r1, s0, s1] = [g, m, 1n, 0n]; while (r1) { const q = r0 / r1; [r0, r1] = [r1, r0 - q * r1]; [s0, s1] = [s1, s0 - q * s1]; } return mod(s0, m); };
+  const add = (a, b) => { if (!a) return b; if (!b) return a; let l; if (a[0] === b[0]) { if (mod(a[1] + b[1], P) === 0n) return null; l = mod(3n * a[0] * a[0] * inv(2n * a[1], P), P); } else l = mod((b[1] - a[1]) * inv(b[0] - a[0], P), P); const x = mod(l * l - a[0] - b[0], P); return [x, mod(l * (a[0] - x) - a[1], P)]; };
+  const mul = (k, pt = G) => { k = mod(k, N); let r = null, a = pt; while (k) { if (k & 1n) r = add(r, a); a = add(a, a); k >>= 1n; } return r; };
+  const neg = pt => pt && [pt[0], mod(-pt[1], P)];
+  const comp = pt => (pt[1] & 1n ? "03" : "02") + pt[0].toString(16).padStart(64, "0");
+  return { P, N, G, mod, add, mul, neg, comp };
+})();
+let test = null;
+function testSetup() {
+  const R = Math.max(24, Math.min(64, TEST)); let k = 0n; for (let i = 0; i < 4; i++) k = (k << 16n) | BigInt(Math.floor(Math.random() * 65536)); k = (k % ((1n << BigInt(R)) - 1n)) + 1n;
+  const Q = EC.mul(k); const x32 = 1n << BigInt(R - 5); const Pp = EC.add(Q, EC.mul(x32));
+  const dp = Math.max(4, Math.min(32, Math.floor(R / 2) - 8));
+  test = { R, k, Q, x32, Pp, seen: new Map(), t0: Date.now(), found: null };
+  return { pubkey: EC.comp(Q), start: "0", range: R, dp, cand_dp: dp, share_dp: dp, species: "both", version: "test", puzzle: "test" };
+}
+function testLines(lines) {
+  if (!test || test.found) return;
+  for (const s of lines) {
+    const x = (BigInt("0x" + s.slice(16, 32)) << 64n) | BigInt("0x" + s.slice(0, 16)); let d = BigInt("0x" + s.slice(32, 80)); if (d >= 1n << 191n) d -= 1n << 192n; const type = s[80];
+    const o = test.seen.get(x);
+    if (!o) { test.seen.set(x, { d, type }); continue; }
+    if (o.type === type) continue;
+    const t = EC.mod(o.type === "0" ? o.d : d, EC.N), w = EC.mod(o.type === "0" ? d : o.d, EC.N);
+    for (const kp of [w - t, w + t, t - w, -(w + t)]) {
+      const c = EC.mul(kp); if (!c || c[0] !== test.Pp[0] || c[1] !== test.Pp[1]) continue;
+      const key = EC.mod(kp - test.x32, EC.N); const C = EC.mul(key);
+      if (C && C[0] === test.Q[0] && C[1] === test.Q[1]) { test.found = key; break; }
+    }
+    if (test.found) {
+      const ok = test.found === test.k, secs = ((Date.now() - test.t0) / 1000).toFixed(1);
+      logln(`KEY FOUND ${test.found.toString(16)} in ${secs} s: ${ok ? "MATCHES the secret" : "DOES NOT MATCH " + test.k.toString(16)}`);
+      say(ok ? `Test passed: this phone solved a ${test.R}-bit key in ${secs} s. Its kangaroos work.` : "Test FAILED: wrong key", ok ? "ok" : "bad");
+      const keep = status.textContent; stop(); say(keep, ok ? "ok" : "bad"); return;
+    }
+  }
+}
 async function start() {
-  const t = tok.value.trim(); if (!/^pk_[\w-]{20,}$/.test(t)) { say("That doesn't look like a worker token (pk_…).", "bad"); return; }
+  const t = tok.value.trim();
+  if (TEST) {
+    go.disabled = true; job = testSetup(); running = true; t0 = Date.now(); sent = 0; rates = {}; loopsPer = {}; queue = [];
+    const n = parseInt(cores.value, 10) || 1; kangs = 24 * n;
+    $("#s-sp").innerHTML = `<span class="pill">tame</span> + <span class="pill w">wild</span>`;
+    logln(`test: random ${job.range}-bit key ${test.k.toString(16)}, dp ${job.dp}, ${n} worker${n > 1 ? "s" : ""}; expected about ${(1.15 * 2 ** (job.range / 2) / 1e6).toFixed(1)} M jumps`);
+    for (let i = 0; i < n; i++) spawn(i, i % 2);
+    go.style.display = "none"; stopB.style.display = ""; $("#stats").style.display = "";
+    timers = [setInterval(tick, 1000)]; try { wake = await navigator.wakeLock.request("screen"); } catch (e) {}
+    say(`Test running: solving a ${job.range}-bit key on this phone…`, "ok"); return;
+  } if (!/^pk_[\w-]{20,}$/.test(t)) { say("That doesn't look like a worker token (pk_…).", "bad"); return; }
   try { localStorage.setItem("kova_token", t); localStorage.setItem("kova_cores", cores.value); } catch (e) {}
   go.disabled = true; say("Asking the pool for the job…");
   const [code, j] = await api("/api/worker/job?tier=cpu");
@@ -97,7 +151,7 @@ function spawn(i, species) {
     const m = e.data;
     if (m.type === "ready") { w.postMessage({ type: "start", job, species, seed: [seed[0].toString(), seed[1].toString()] }); }
     else if (m.type === "stats") { rates[i] = { jumps: m.jumps, t: Date.now() }; loopsPer[i] = m.loops; }
-    else if (m.type === "dps") queue.push(...m.lines);
+    else if (m.type === "dps") { if (TEST) testLines(m.lines); else queue.push(...m.lines); }
     else if (m.type === "error") { logln("worker " + i + ": " + m.text); say("Worker error: " + m.text, "bad"); }
   };
   w.onerror = err => { logln("worker " + i + " failed: " + err.message); };
