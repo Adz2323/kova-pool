@@ -6,7 +6,7 @@ server-side changes are described here rather than linked.
 
 ## 2026-10-26 — CPU worker: join with a Mac or Linux machine, no GPU
 
-`kangaroo/cpu/kangaroo_cpu.cpp` ([commit](https://github.com/Adz2323/kova-pool/commits/main)) is the pool's walk in
+`kangaroo/cpu/kangaroo_cpu.cpp` ([commit](https://github.com/Adz2323/kova-pool/commit/b3d4046)) is the pool's walk in
 plain C++: the same jump tables, the same 2-cycle and loop rules as the GPU turbo kernels, the same distinguished
 points. Checked on a RunPod RTX 4090: GPU kangaroos (tame) and CPU kangaroos (wild) run side by side on a 56-bit test
 key reported 34 identical points and the key was recovered from them, so a laptop's points sit in the same table as
