@@ -33,8 +33,8 @@ a{color:var(--tame)}
 <body>
 <div class="wrap">
   <a class="brand" href="/"><span class="o"><svg viewBox="0 0 100 100"><path d="M56 16 L30 56 L48 56 L40 84 L68 44 L50 44 Z" fill="#F0B33D" stroke="#F0B33D" stroke-width="4" stroke-linejoin="round"/></svg></span>Kova Pool <span class="small" style="font-weight:600">· phone</span></a>
-  <h1>A few kangaroos in your pocket</h1>
-  <p>This page runs part of the search in your browser: real kangaroos on the real puzzle, walking the same graph as the GPUs. Every point it finds is checked, paid and searched exactly like a GPU's. A phone does about a million jumps a second against a 5090's nineteen billion, so this is a way to be part of it rather than a way to move the needle: expect a point every few hours, not every minute.</p>
+  <h1>Your phone, on the charger, in the herd</h1>
+  <p>For the hours your phone sits plugged in: overnight, on the desk, while you sleep. This page runs real kangaroos on the real puzzle, walking the same graph as the GPUs, so every point it finds is checked, paid and searched exactly like a GPU's. A phone does about a million jumps a second to a 5090's nineteen billion: it won't move the needle on its own, and it doesn't have to. The herd is everyone who shows up. Expect a point every few hours.</p>
   <div class="card">
     <label for="tok">Your worker token</label>
     <input id="tok" placeholder="pk_…" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -45,7 +45,7 @@ a{color:var(--tame)}
     </div>
     <button class="go" id="go">Start</button>
     <button class="stop" id="stop" style="display:none">Stop</button>
-    <div class="status" id="status">Idle. The search runs only while this page is open; the screen can be dimmed but not locked.</div>
+    <div class="status" id="status">Idle. Plug the phone in, tap Start, dim the screen and leave the page open: it stops when the tab closes or the screen locks.</div>
     <div class="stats" id="stats" style="display:none">
       <div class="stat t"><b id="s-jps">0</b><span>jumps per second</span></div>
       <div class="stat w"><b id="s-dps">0</b><span id="s-dps-l">points handed in</span></div>
@@ -54,7 +54,7 @@ a{color:var(--tame)}
     </div>
     <div class="log" id="log"></div>
   </div>
-  <p class="small">Battery: it uses as many cores as you pick, flat out, so plug the phone in. Nothing is installed; closing the tab stops it. Open source: <a href="https://github.com/Adz2323/kova-pool/blob/main/kangaroo/cpu/kangaroo_wasm.cpp">kangaroo_wasm.cpp</a> on GitHub. A laptop or desktop does better with the <a href="/#/join">one-line CPU worker</a>.</p>
+  <p class="small">It runs the cores you pick flat out, so keep it on the charger; pick fewer cores if the phone gets warm. Nothing is installed; closing the tab stops it. Open source: <a href="https://github.com/Adz2323/kova-pool/blob/main/kangaroo/cpu/kangaroo_wasm.cpp">kangaroo_wasm.cpp</a> on GitHub. A laptop or desktop does better with the <a href="/#/join">one-line CPU worker</a>.</p>
 </div>
 <script>
 const $ = s => document.querySelector(s);
