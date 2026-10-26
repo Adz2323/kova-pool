@@ -44,6 +44,11 @@ or by hand: `cd kangaroo/cpu && c++ -O3 -std=c++17 -pthread -I.. -o kangaroo_cpu
 `KANG_CPU=1 KANG_BIN=$PWD/kangaroo_cpu POOL_TOKEN=pk_... python3 ../../pool/pool_agent.py`.
 `./kangaroo_cpu --selftest --range 40` solves a random 40-bit key in under a second.
 
+## On a phone
+
+https://pool.kova23.com/phone runs the same kangaroos in the browser (`kangaroo/cpu/kangaroo_wasm.cpp` built to
+WebAssembly; `pool/site/phone.html` + `phone-worker.js` are the page). Nothing to install; a point every few hours.
+
 ## Build from source
 
 Linux: `docker build -f pool/Dockerfile -t kova-pool .` from this directory (needs the CUDA 12.8 base images), or

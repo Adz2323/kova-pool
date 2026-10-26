@@ -4,6 +4,16 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-26 — phone / browser worker
+
+pool.kova23.com/phone runs kangaroos in your phone's browser: nothing to install, paste the token once, tap Start.
+It is the CPU solver compiled to WebAssembly (`kangaroo/cpu/kangaroo_wasm.cpp`, 24 KB; the walk itself moved into
+`kangaroo/cpu/kangaroo_core.h`, shared with the native build), so it walks the same graph as the GPUs. Checked: the
+browser build (tame) and the native solver (wild) found 417 identical points on a 48-bit test key and recovered it;
+10,244 points from a headless browser verified at 100 % sampling by the pool. Honest numbers: about a million jumps a
+second per core, a point every few hours; a way to be part of the herd rather than to move the needle. Pay per jump
+is the same as a GPU's. The page runs while open (screen wake lock), uploads every 2 s, stops when you close the tab.
+
 ## 2026-10-26 — CPU worker: join with a Mac or Linux machine, no GPU
 
 `kangaroo/cpu/kangaroo_cpu.cpp` ([commit](https://github.com/Adz2323/kova-pool/commit/b3d4046)) is the pool's walk in
