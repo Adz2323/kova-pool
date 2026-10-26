@@ -15,7 +15,7 @@ pool's herd with a POOL_TOKEN from the account page on pool.kova23.com.
      gentle (the "only when the PC is idle" rule is the Windows agent's job).
 
 Only the Python standard library. Environment: POOL_URL (default https://pool.kova23.com), POOL_TOKEN (required),
-KANG_ARGS (extra kangaroo options), KANG_RC=auto|cubin|cuda|off, POWER_CAP_PERCENT (60), KANG_CPU=1 (testing without
+KANG_ARGS (extra kangaroo options), KANG_RC=auto|cubin|cuda|off, POWER_CAP_PERCENT (60), KANG_THREADS (CPU mode: threads, 0 = all cores), KANG_CPU=1 (testing without
 a GPU), HEARTBEAT_S (15).
 """
 import collections, json, os, re, shlex, signal, subprocess, sys, threading, time, urllib.request, urllib.error
@@ -207,7 +207,7 @@ def start(job, gpus):
                "--agent", "--dpstream", "--dplocal", "0", "--report", "5", "--species", job["species"]]
         if job.get("blind"): cmd += ["--blind", job["blind"]]
         if int(job.get("cand_dp") or job.get("dp") or 0): cmd += ["--dp", str(job.get("cand_dp") or job["dp"])]
-        cmd += ["--cpu", "--threads", "2"] if CPU_MODE else ["--gpu", str(idx)]
+        cmd += ["--cpu", "--threads", os.environ.get("KANG_THREADS", "0")] if CPU_MODE else ["--gpu", str(idx)]   # 0 = all cores
         if not CPU_MODE and RC_MODE != "off" and "--rc" not in EXTRA: cmd += ["--rc", RC_MODE]
         cmd += EXTRA
         log(f"GPU {idx}: " + " ".join(shlex.quote(c) for c in cmd))
@@ -307,4 +307,6 @@ def main():
         log(f"kangaroo exited (codes {[p.returncode for p in procs]}), restarting in 10 s"); time.sleep(10)
 
 if __name__ == "__main__":
-    main()
+    try: main()
+    except KeyboardInterrupt:
+        log("stopping"); import os as _os; _os.system("pkill -TERM -P %d >/dev/null 2>&1" % _os.getpid()); sys.exit(0)

@@ -4,6 +4,17 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-26 — CPU worker: join with a Mac or Linux machine, no GPU
+
+`kangaroo/cpu/kangaroo_cpu.cpp` ([commit](https://github.com/Adz2323/kova-pool/commits/main)) is the pool's walk in
+plain C++: the same jump tables, the same 2-cycle and loop rules as the GPU turbo kernels, the same distinguished
+points. Checked on a RunPod RTX 4090: GPU kangaroos (tame) and CPU kangaroos (wild) run side by side on a 56-bit test
+key reported 34 identical points and the key was recovered from them, so a laptop's points sit in the same table as
+the 5090s' and can complete their collisions. About 3 M jumps/s per core (a GPU does billions), paid and verified
+exactly like a GPU's: CPU-tier share points are dp 32, worth 2^32 jumps each, so the pay per jump is the same.
+Join: `curl -fsSL https://pool.kova23.com/cpu.sh | bash -s -- pk_YOURTOKEN` (the "No GPU (CPU)" tab on the site),
+Ctrl-C to stop. Phones next (same code, built for the browser).
+
 ## 2026-10-26 — share points: every point checked for rarity, duplicates refused (image :6)
 
 Two bugs fixed together on the pool side, and the worker changed to match

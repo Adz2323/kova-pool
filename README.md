@@ -33,6 +33,17 @@ worker never holds both trails of a collision; wild workers start from a point t
 points go to the pool, which verifies a sample by re-deriving them, and the key, if found, is derived on the pool's
 server. The worker never touches a wallet.
 
+## No GPU? The CPU worker
+
+`kangaroo/cpu/kangaroo_cpu.cpp` is the same walk in plain C++ (no CUDA): it runs the pool's graph on a Mac, a Linux
+box or (soon) a phone, and its points collide with the GPUs' points. One line on a Mac or Linux machine:
+
+    curl -fsSL https://pool.kova23.com/cpu.sh | bash -s -- pk_YOURTOKEN        # add a number for fewer cores
+
+or by hand: `cd kangaroo/cpu && c++ -O3 -std=c++17 -pthread -I.. -o kangaroo_cpu kangaroo_cpu.cpp`, then
+`KANG_CPU=1 KANG_BIN=$PWD/kangaroo_cpu POOL_TOKEN=pk_... python3 ../../pool/pool_agent.py`.
+`./kangaroo_cpu --selftest --range 40` solves a random 40-bit key in under a second.
+
 ## Build from source
 
 Linux: `docker build -f pool/Dockerfile -t kova-pool .` from this directory (needs the CUDA 12.8 base images), or
