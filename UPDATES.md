@@ -4,6 +4,14 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-26 — meetings are now spotted at share-point density
+
+The pool's share table does more than pay you: when two points with the same x arrive from different species (a tame
+and a wild kangaroo that have met), the pool sends the pair to the console, which derives the key from them. Before,
+a meeting was only noticed when the merged trail reached a point at the console's dp 47; now it is noticed at dp 40
+on GPU trails (128× sooner) and at dp 32 between CPU and phone kangaroos. The console's table still only grows with
+dp-47 points. Server-side change; nothing to update on a worker.
+
 ## 2026-10-26 — phone / browser worker
 
 pool.kova23.com/phone runs kangaroos in your phone's browser: nothing to install, paste the token once, tap Start.
