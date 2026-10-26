@@ -1,5 +1,7 @@
 # Kova Pool worker
 
+What changed and when: [UPDATES.md](UPDATES.md).
+
 The open-source worker for [pool.kova23.com](https://pool.kova23.com): a pooled Pollard-kangaroo search for the key
 behind a Bitcoin puzzle public key, run as one herd across everyone's GPUs. This repository holds everything that runs
 on a member's machine; the pool server (accounts, verification, shares) is separate; the payout script is here so the split can be checked.
