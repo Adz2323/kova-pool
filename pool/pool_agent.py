@@ -92,7 +92,7 @@ def bad_host(procs, why):
 
 def fetch_job():
     while True:
-        code, j = call("/api/worker/job")
+        code, j = call("/api/worker/job?tier=cpu" if CPU_MODE else "/api/worker/job")
         if code == 200 and j.get("pubkey") and j.get("range"): return j
         if code in (401, 403):
             log(f"the pool refused this token ({j.get('error', code)}); check POOL_TOKEN on your account page. Retrying in 60 s")
@@ -103,12 +103,20 @@ def fetch_job():
         time.sleep(30)
 
 STAT = re.compile(r"^STAT (.*)$"); DP = re.compile(r"^DP ([0-9a-f]{80}[01])$")
+SHARE_MASK = 0          # low bits of x that must be zero for a point to be a share point (job share_dp - 32); 0 = every DP is one
+
+def share_mask(job):
+    """the solver tests DPs on the top 32 bits of x (cand_dp); the pool pays for the rarer share points (share_dp): those
+    whose next share_dp-32 bits, i.e. the low bits of the recorded x, are zero too. Everything else stays on the GPU."""
+    extra = int(job.get("share_dp") or job.get("dp") or 0) - int(job.get("cand_dp") or job.get("dp") or 0)
+    return (1 << extra) - 1 if extra > 0 else 0
 
 def reader(idx, proc):
     for raw in iter(proc.stdout.readline, b""):
         line = raw.decode(errors="replace").rstrip()
         m = DP.match(line)
         if m:
+            if SHARE_MASK and int(m.group(1)[0:16], 16) & SHARE_MASK: continue      # candidate, not a share point
             with dpq_lock:
                 dpq.append(m.group(1))
                 if len(dpq) > QUEUE_MAX: dpq.popleft(); st["dropped"] += 1
@@ -198,7 +206,7 @@ def start(job, gpus):
         cmd = [BIN, "--pubkey", job["pubkey"], "--start", str(job.get("start") or "0"), "--range", str(job["range"]),
                "--agent", "--dpstream", "--dplocal", "0", "--report", "5", "--species", job["species"]]
         if job.get("blind"): cmd += ["--blind", job["blind"]]
-        if int(job.get("dp") or 0): cmd += ["--dp", str(job["dp"])]
+        if int(job.get("cand_dp") or job.get("dp") or 0): cmd += ["--dp", str(job.get("cand_dp") or job["dp"])]
         cmd += ["--cpu", "--threads", "2"] if CPU_MODE else ["--gpu", str(idx)]
         if not CPU_MODE and RC_MODE != "off" and "--rc" not in EXTRA: cmd += ["--rc", RC_MODE]
         cmd += EXTRA
@@ -253,8 +261,10 @@ def main():
     threading.Thread(target=dp_loop, daemon=True).start()
     job = fetch_job()
     while True:
+        global SHARE_MASK
+        SHARE_MASK = share_mask(job)
         with st_lock: st["job"] = job; st["power"] = job.get("power", "full"); st["mode"] = job.get("mode", "pooled"); st["suspended"] = ""
-        log(f"target {job['pubkey'][:20]}... range 2^{job['range']} dp {job['dp']} | species {job['species']}{' (blinded)' if job.get('blind') else ''} | "
+        log(f"target {job['pubkey'][:20]}... range 2^{job['range']} dp {job.get('cand_dp') or job['dp']} (share points: dp {job.get('share_dp') or job['dp']}) | species {job['species']}{' (blinded)' if job.get('blind') else ''} | "
             f"mode {job.get('mode')} | power {job.get('power')} | job {job['version']}")
         procs = start(job, gpus)
         apply_power(job.get("power", "full"), procs)

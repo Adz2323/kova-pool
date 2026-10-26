@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,6 +59,7 @@ type nativeEngine struct {
 	job      map[string]any
 	gpus     []string
 	dpq      []string
+	shareMsk uint64 // low bits of x that must be zero for a share point (job share_dp - cand_dp); 0 = every DP
 	dropped  int64
 	sent     int64
 	found    bool
@@ -216,7 +218,7 @@ func (n *nativeEngine) launch(job map[string]any) error {
 		if b := str(job["blind"]); b != "" {
 			args = append(args, "--blind", b)
 		}
-		if dp := num(job["dp"]); dp > 0 {
+		if dp := numOr(job["cand_dp"], num(job["dp"])); dp > 0 { // the solver runs at cand_dp (<= 32); the pool pays for share points
 			args = append(args, "--dp", fmt.Sprint(dp))
 		}
 		cmd := exec.Command(filepath.Join(n.dir, "kangaroo.exe"), args...)
@@ -245,6 +247,9 @@ func (n *nativeEngine) reader(idx int, r io.Reader) {
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
 		if m := reDP.FindStringSubmatch(line); m != nil {
+			if x0, err := strconv.ParseUint(m[1][:16], 16, 64); err == nil && x0&n.shareMsk != 0 {
+				continue // a candidate, not a share point: stays on this machine
+			}
 			n.mu.Lock()
 			if len(n.dpq) >= queueMax {
 				n.dpq = n.dpq[1:]
@@ -503,6 +508,11 @@ func (n *nativeEngine) agent() {
 	for {
 		n.mu.Lock()
 		n.job = job
+		if extra := numOr(job["share_dp"], num(job["dp"])) - numOr(job["cand_dp"], num(job["dp"])); extra > 0 {
+			n.shareMsk = (uint64(1) << uint(extra)) - 1
+		} else {
+			n.shareMsk = 0
+		}
 		n.susp = ""
 		n.hb = nil
 		n.mu.Unlock()
@@ -620,6 +630,13 @@ func strOr(v any, d string) string {
 	}
 	return d
 }
+func numOr(v any, d int64) int64 {
+	if v == nil {
+		return d
+	}
+	return num(v)
+}
+
 func num(v any) int64 {
 	switch t := v.(type) {
 	case float64:
