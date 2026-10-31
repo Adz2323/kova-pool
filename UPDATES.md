@@ -4,6 +4,25 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-31 — the worker image is now built in public (image :8), and a share correction
+
+- `adz23/kova-pool` is built by GitHub Actions from this repository
+  ([worker-image.yml](https://github.com/Adz2323/kova-pool/blob/main/.github/workflows/worker-image.yml)), not on the
+  operator's machine. Every build is a public log, and BuildKit attaches signed provenance (the exact commit, the
+  Dockerfile, the base images) and an SBOM to the image on Docker Hub. The number in
+  [pool/IMAGE_TAG](https://github.com/Adz2323/kova-pool/blob/main/pool/IMAGE_TAG) is pushed once and never
+  overwritten; every build also gets `sha-<commit>`. Check what you are running:
+  `docker buildx imagetools inspect adz23/kova-pool:8 --format '{{json .Provenance}}'` names the commit, and the
+  build log for it is under Actions. Actions pinned to commits, as for the Windows build.
+- Share correction on the operator's own token. The tier bug in the entry below was first described as the GPU
+  handing in dp-32 points; the day-by-day ledger shows it did not: the RTX 5090 ran at dp 40 the whole time (about
+  1,450 points a day, which is a 5090), and what was wrong was the pay per point, 2^32 instead of 2^40, from 27 to
+  30 October. Those four days were re-credited from the point count (points × 2^40, about 6.4 P shares), the pool
+  total adjusted to match, and the correction is in the audit table. No other account was affected (there were no
+  others), nothing in the DP table was wrong or missing: the points themselves were verified and stored normally.
+- The website has an Updates page that shows this file, read from GitHub, so what the site says and what the
+  repository says cannot differ.
+
 ## 2026-10-31 — several machines on one token, console restart, Windows app hardening (image :7, KovaPool build 2)
 
 - Two machines on one token used to overwrite each other's speed every 15 s, so the account page showed one of them
