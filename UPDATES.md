@@ -4,6 +4,24 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-31 — one token, one kind of worker (image :7)
+
+Found on the operator's own GPU: a token that had been used once on the phone page stayed on the CPU tier, so the
+RTX 4090 that went back on it handed in dp-32 points, 256× as many as a GPU should for the same pay (and 256× the
+verifier work). The reverse would have put a phone on dp 40: a point every few weeks instead of every few hours.
+
+Now a token runs one kind of worker. Every worker tells the pool what it is on every call (the agent sends its tier
+with the job request, heartbeats and points; the phone page sends `cpu`), and a token keeps its tier while a worker of
+that tier has been seen in the last 10 minutes. Anything else asking for it gets "this token is in use by a GPU
+worker: make a separate token for each kind of worker" (HTTP 409), and a worker that was switched out stops and
+re-asks instead of silently running at the wrong level. The account page's Phone and No-GPU tabs make a phone / laptop
+token for you; GPUs keep theirs. Workers on image :6 and the current Windows app still work (they are taken to be
+their token's tier); image :7 ([commit](https://github.com/Adz2323/kova-pool/commit/227609b)) sends the tier.
+
+Also this week, from the first scheduled security review of the pool server: the X-post approval link no longer
+posts on a plain GET (a button does), failed admin keys are logged and rate-limited, slow clients get a socket
+timeout, the Server header no longer names the Python version, backups are owner-only. No member action needed.
+
 ## 2026-10-26 — meetings are now spotted at share-point density
 
 The pool's share table does more than pay you: when two points with the same x arrive from different species (a tame
