@@ -32,7 +32,7 @@ import (
 const (
 	appName     = "KovaPool"
 	container   = "kovapool"
-	image       = "adz23/kova-pool:7"
+	image       = "adz23/kova-pool:8"
 	settings    = "127.0.0.1:47716"
 	defaultPool = "https://pool.kova23.com"
 )
