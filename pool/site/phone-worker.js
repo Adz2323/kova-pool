@@ -19,7 +19,7 @@ function start(job, species, seed) {
   words(job.pubkey.slice(2), off, mem); mem[off + 4] = job.pubkey.startsWith("03") ? 1n : 0n;
   const st = BigInt("0x" + (job.start || "0")); for (let i = 0; i < 4; i++) mem[off + 5 + i] = (st >> BigInt(64 * i)) & 0xFFFFFFFFFFFFFFFFn;
   if (species === 1 && job.blind) { words(job.blind.slice(2), off + 9, mem); mem[off + 13] = job.blind.startsWith("03") ? 1n : 0n; mem[off + 14] = 1n; }
-  setShare(job.cand_dp || job.dp, job.share_dp || job.dp);
+  const cand = Number(job.cand_dp || job.dp || 32); setShare(cand, job.share_dp || job.dp);
   const rc = ex.kw_init(Number(job.range), cand, species, BigInt(seed[0]), BigInt(seed[1]));
   if (rc) { postMessage({ type: "error", text: "init failed (" + rc + ")" }); return; }
   nt = ex.kw_nt(); running = true; jumps = 0; loop();
