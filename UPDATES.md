@@ -4,6 +4,16 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-31 — expected vs credited shares on your account page
+
+Every token now shows, next to its shares, what it *should* have earned: the speed your worker reports × the seconds
+it was heartbeating (gaps longer than a minute count for nothing), against the verified points it handed in × 2^dp.
+Over a day the two agree within a few percent; the page says "too early to compare" until enough points have landed
+for the comparison to mean anything, and flags a token in red only when it is further under than chance explains.
+The History table has the same per day. It is a check you run on the pool, not one the pool runs on you: a lasting
+gap means the worker is handing in less than it says, or we are under-crediting you, and either way you can see it the
+same day. Server-side; nothing to update on a worker. Tracked from today, so earlier days show a dash.
+
 ## 2026-10-31 — the worker image is now built in public (image :8), and a share correction
 
 - `adz23/kova-pool` is built by GitHub Actions from this repository
