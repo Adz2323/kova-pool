@@ -25,6 +25,7 @@ POOL_URL = os.environ.get("POOL_URL", "https://pool.kova23.com").rstrip("/")
 TOKEN = os.environ.get("POOL_TOKEN", "").strip()
 BIN = os.environ.get("KANG_BIN", os.path.join(APP, "kangaroo"))
 CPU_MODE = os.environ.get("KANG_CPU", "0") == "1"
+MY_TIER = "cpu" if CPU_MODE else "gpu"       # told to the pool on every call: a token runs ONE tier (a phone and a GPU need separate tokens)
 EXTRA = shlex.split(os.environ.get("KANG_ARGS", ""))
 RC_MODE = os.environ.get("KANG_RC", "auto")
 CUBIN_URL = os.environ.get("KANG_CUBIN_URL", "")   # test a kernel build without a new image: downloaded once, passed as --rc-cubin
@@ -92,9 +93,9 @@ def bad_host(procs, why):
 
 def fetch_job():
     while True:
-        code, j = call("/api/worker/job?tier=cpu" if CPU_MODE else "/api/worker/job")
+        code, j = call(f"/api/worker/job?tier={MY_TIER}")
         if code == 200 and j.get("pubkey") and j.get("range"): return j
-        if code in (401, 403):
+        if code in (401, 403, 409):            # 409: the token is in use by a worker of the other tier (phone / CPU vs GPU)
             log(f"the pool refused this token ({j.get('error', code)}); check POOL_TOKEN on your account page. Retrying in 60 s")
             with st_lock: st["suspended"] = str(j.get("error", code))
             time.sleep(60); continue
@@ -140,15 +141,17 @@ def dp_loop():
         if not n or (n < BATCH_MAX and time.time() - last < BATCH_S): continue
         with dpq_lock: batch = [dpq.popleft() for _ in range(min(n, BATCH_MAX))]
         with st_lock: ver = (st["job"] or {}).get("version", "")
-        code, r = call("/api/worker/dps", {"version": ver, "dps": batch}, timeout=60)
+        code, r = call("/api/worker/dps", {"version": ver, "dps": batch, "tier": MY_TIER}, timeout=60)
         if code == 200:
             with st_lock:
                 st["sent"] += len(batch)
                 if r.get("dropped"): st["stale"] += len(batch)
                 if r.get("found"): st["found"] = True
             last = time.time()
-        elif code == 400:
+        elif code in (400, 409):
             log(f"the pool rejected a DP batch ({r.get('error')}); dropping it"); last = time.time()
+            if code == 409:
+                with st_lock: st["suspended"] = str(r.get("error", code))      # the token changed tier under us: the main loop stops and re-asks
         else:
             with dpq_lock:
                 dpq.extendleft(reversed(batch))
@@ -231,14 +234,14 @@ def heartbeat_loop(gpus):
         with st_lock:
             jps = sum(v.get("jumps", 0) for v in st["per"].values())
             kangs = sum(v.get("kangs", 0) for v in st["per"].values()); loops = sum(v.get("loops", 0) for v in st["per"].values())
-        hb_payload = {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops}
+        hb_payload = {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops, "tier": MY_TIER}
         if time.time() - T0 < 2 * HEARTBEAT_S: hb_payload["host"] = host_info()[:300]; hb_payload["machine"] = os.environ.get("SALAD_MACHINE_ID", "")[:64]
         code, r = call("/api/worker/heartbeat", hb_payload)
         if code == 200:
             with st_lock:
                 st["hb"] = r
                 if r.get("found"): st["found"] = True
-        elif code in (401, 403):
+        elif code in (401, 403, 409):
             with st_lock: st["suspended"] = str(r.get("error", code))
         else: log(f"heartbeat failed: {code} {r.get('error', '')}")
         time.sleep(HEARTBEAT_S)
@@ -283,7 +286,7 @@ def main():
                     if time.time() - slow_since > 60: bad_host(procs, f"{jps / 1e9:.2f} G jumps/s, below the MIN_GJPS floor of {MIN_GJPS:g}")
                 else: slow_since = None
             if susp:
-                log(f"token suspended by the pool ({susp}): stopping. Fix it on your account page; retrying in 5 min")
+                log(f"the pool refused this token ({susp}): stopping. Fix it on your account page; retrying in 5 min")
                 stop(procs); time.sleep(300); job = fetch_job(); switched = True; break
             if found:
                 log("the pool reports the key is found; stopping until a new target is set")

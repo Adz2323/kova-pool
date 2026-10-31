@@ -38,7 +38,7 @@ a{color:var(--tame)}
   <div class="card">
     <label for="tok">Your worker token</label>
     <input id="tok" placeholder="pk_…" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <p class="small" style="margin:.3rem 0 0">From the <a href="/#/account">account page</a>. It stays in this browser only.</p>
+    <p class="small" style="margin:.3rem 0 0">From the <a href="/#/account">account page</a>: make a separate token for your phone (one token runs one kind of worker; a GPU's token is refused here). It stays in this browser only.</p>
     <div class="row" style="margin-top:.6rem">
       <div><label for="cores">Workers</label><select id="cores"></select></div>
       <div class="n"><label>&nbsp;</label><span class="small" id="cores-note"></span></div>
@@ -132,7 +132,7 @@ async function start() {
   try { localStorage.setItem("kova_token", t); localStorage.setItem("kova_cores", cores.value); } catch (e) {}
   go.disabled = true; say("Asking the pool for the job…");
   const [code, j] = await api("/api/worker/job?tier=cpu");
-  if (code !== 200 || !j.pubkey) { go.disabled = false; say(code === 401 || code === 403 ? "The pool refused this token: " + (j.error || code) : "Could not reach the pool (" + (j.error || code) + ")", "bad"); return; }
+  if (code !== 200 || !j.pubkey) { go.disabled = false; say(code === 401 || code === 403 || code === 409 ? "The pool refused this token: " + (j.error || code) : "Could not reach the pool (" + (j.error || code) + ")", "bad"); return; }
   job = j; running = true; t0 = Date.now(); sent = 0; rates = {}; loopsPer = {}; queue = [];
   const n = parseInt(cores.value, 10) || 1; kangs = 24 * n;
   const sp = j.species === "wild" ? 1 : 0;
@@ -160,16 +160,17 @@ function jps() { const now = Date.now(); let s = 0; for (const r of Object.value
 async function flush() {
   if (!running || !queue.length) return;
   const batch = queue.splice(0, 5000);
-  const [code, r] = await api("/api/worker/dps", { dps: batch, version: job.version });
+  const [code, r] = await api("/api/worker/dps", { dps: batch, version: job.version, tier: "cpu" });
   if (code === 200) { sent += r.new || 0; logln(`${batch.length} point${batch.length > 1 ? "s" : ""} handed in, ${r.new || 0} new`); if (r.job_version && r.job_version !== job.version) restart("the pool moved to a new job"); }
   else if (code === 400) logln("rejected: " + (r.error || code));
-  else if (code === 401 || code === 403) { say("The pool refused this token: " + (r.error || code), "bad"); stop(); }
+  else if (code === 401 || code === 403 || code === 409) { say("The pool refused this token: " + (r.error || code), "bad"); stop(); }
   else { queue.unshift(...batch); logln("upload failed (" + code + "), retrying"); }
 }
 async function heartbeat() {
   if (!running) return;
-  const [code, r] = await api("/api/worker/heartbeat", { gpus: ["Phone/browser: " + (navigator.platform || "?") + " x" + workers.length], jps: jps(), uptime: (Date.now() - t0) / 1000, kangs, loops: loops() });
+  const [code, r] = await api("/api/worker/heartbeat", { gpus: ["Phone/browser: " + (navigator.platform || "?") + " x" + workers.length], jps: jps(), uptime: (Date.now() - t0) / 1000, kangs, loops: loops(), tier: "cpu" });
   if (code === 200 && r.job_version && r.job_version !== job.version) restart("the pool moved to a new job");
+  else if (code === 401 || code === 403 || code === 409) { say("The pool refused this token: " + (r.error || code), "bad"); stop(); }
 }
 function tick() { if (!running) return; $("#s-jps").textContent = fmt(jps()); $("#s-dps").textContent = String(sent); const s = Math.floor((Date.now() - t0) / 1000); $("#s-up").textContent = Math.floor(s / 3600) + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
 function stop() {
