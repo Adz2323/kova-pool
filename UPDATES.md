@@ -4,6 +4,21 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-31 — several machines on one token, console restart, Windows app hardening (image :7, KovaPool build 2)
+
+- Two machines on one token used to overwrite each other's speed every 15 s, so the account page showed one of them
+  and the console saw one worker. The agent and KovaPool now send a per-process worker id; the pool keeps a row per
+  process, your token's speed and GPU list are the sum, and the console shows one row per machine. Old workers are
+  told apart by address until they update.
+- The console's Restart button now reaches pool workers: the agent restarts the solver in place and re-fetches the job.
+- KovaPool for Windows: its settings page on 127.0.0.1:47716 accepted form posts from any web page, so a page you
+  visited could have swapped your token for someone else's. It now refuses anything that isn't the page itself
+  (Host, Origin and Sec-Fetch-Site checks, a per-launch secret on every post, POST-only actions), shows the saved
+  token masked, sends its tier and worker id, honours a restart, and in Docker mode pulls `adz23/kova-pool:7`. The
+  status poll is every 15 s instead of every second.
+- The Windows build workflow pins every action to a commit (the rolling `windows-latest` release is what every
+  KovaPool.exe downloads and runs) and builds with Go 1.27.
+
 ## 2026-10-31 — one token, one kind of worker (image :7)
 
 Found on the operator's own GPU: a token that had been used once on the phone page stayed on the CPU tier, so the

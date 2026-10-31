@@ -8,22 +8,24 @@ on:
     branches: [main]
     paths: ["kangaroo/**", "CUDAMath.h", "fmul32.h", "pool/windows/**", ".github/workflows/windows-worker.yml"]
   workflow_dispatch:
+# Every action is pinned to a commit (the rolling release below is what every KovaPool.exe downloads and runs, so a
+# hijacked action tag must not be able to publish into it); bump the pins by hand or with `gh actions-lock`.
 permissions:
   contents: write
 jobs:
   build:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1          # cl.exe on PATH: nvcc's host compiler on Windows
-      - uses: Jimver/cuda-toolkit@v0.2.36
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0: cl.exe on PATH, nvcc's host compiler on Windows
+      - uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
         id: cuda
         with:
           cuda: "12.8.1"
           method: network
           sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
-      - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with: { go-version: "1.27" }
       - name: Patch a copy of the sources for MSVC
         run: python pool/windows/winpatch.py . build
       - name: Compile kangaroo.exe
@@ -91,10 +93,10 @@ jobs:
           Compress-Archive -Path dist/kangaroo.exe, dist/rc -DestinationPath dist/kangaroo-windows.zip -Force
           "${{ github.sha }}" | Out-File -NoNewline dist/VERSION.txt
           Get-ChildItem -Recurse dist | Format-Table Name, Length
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: kova-pool-windows, path: dist/ }
       - name: Publish to the rolling release "windows-latest"
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: windows-latest
           name: Windows worker (latest)

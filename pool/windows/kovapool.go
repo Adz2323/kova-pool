@@ -11,6 +11,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +32,7 @@ import (
 const (
 	appName     = "KovaPool"
 	container   = "kovapool"
-	image       = "adz23/kova-pool:6"
+	image       = "adz23/kova-pool:7"
 	settings    = "127.0.0.1:47716"
 	defaultPool = "https://pool.kova23.com"
 )
@@ -499,7 +501,7 @@ func powerCap(pct int) bool {
 
 // ------------------------------------------------------------------ pool
 func poolJob() (map[string]any, error) {
-	req, _ := http.NewRequest("GET", strings.TrimRight(cfg.PoolURL, "/")+"/api/worker/job", nil)
+	req, _ := http.NewRequest("GET", strings.TrimRight(cfg.PoolURL, "/")+"/api/worker/job?tier=gpu", nil)
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	c := &http.Client{Timeout: 15 * time.Second}
 	r, err := c.Do(req)
@@ -520,7 +522,9 @@ func poolJob() (map[string]any, error) {
 func supervise() {
 	capped := false
 	gentleTick := 0
+	tickN := 0
 	for {
+		tickN++
 		running := isRunning()
 		mu.Lock()
 		state.Engine = cfg.Engine
@@ -536,7 +540,7 @@ func supervise() {
 			state.Status = "not running"
 		}
 		mu.Unlock()
-		if cfg.Token != "" {
+		if cfg.Token != "" && tickN%15 == 1 { // species / mode / power for the status line: every 15 s is plenty (the pool allows 120 calls a minute per token, and the worker's own heartbeats and DP batches share that)
 			if j, err := poolJob(); err == nil {
 				mu.Lock()
 				state.Species, _ = j["species"].(string)
@@ -628,8 +632,9 @@ button{background:#0F7C78;color:#fff;border:0;border-radius:6px;padding:.6rem 1r
 <h1>KovaPool</h1>
 <div class="box" id="status">Loading…</div>
 <form class="box" method="post" action="/save">
-<label>Pool token <span style="font-weight:400;color:#7A858F">(from your account page on pool.kova23.com → Connect a GPU)</span></label>
-<input type="text" name="token" value="{{TOKEN}}" placeholder="pk_…" autocomplete="off" spellcheck="false">
+<input type="hidden" name="csrf" value="{{CSRF}}">
+<label>Pool token <span style="font-weight:400;color:#7A858F">(from your account page on pool.kova23.com → Connect a GPU; use a GPU token, not a phone one)</span></label>
+<input type="text" name="token" value="" placeholder="{{TOKEN}}" autocomplete="off" spellcheck="false">
 <label>Idle only: start after the PC has been idle for</label><input type="number" name="idle" value="{{IDLE}}" min="1" max="120" style="width:6rem"> minutes
 <label><input type="checkbox" name="autostart" {{AUTO}}> Start KovaPool when Windows starts</label>
 <label>Engine</label>
@@ -650,13 +655,51 @@ document.getElementById('log').textContent=s.Log||'(no output yet)';}
 tick();setInterval(tick,3000);
 </script>`
 
+// The settings page is only ever opened from this PC, so anything that doesn't look like that is refused: a page on
+// another site can make the browser POST to 127.0.0.1 (and swap the token for its own), and DNS rebinding can read it.
+// Guard: the Host header must be ours, a cross-site fetch (Origin / Sec-Fetch-Site) is refused, and every form POST
+// must carry the per-launch secret the page was rendered with.
+var csrf = func() string { b := make([]byte, 16); rand.Read(b); return hex.EncodeToString(b) }()
+
+func guard(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != settings && r.Host != "localhost:47716" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if o := r.Header.Get("Origin"); o != "" && o != "http://"+settings && o != "http://localhost:47716" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if sf := r.Header.Get("Sec-Fetch-Site"); sf != "" && sf != "same-origin" && sf != "none" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if r.Method == "POST" {
+			r.ParseForm()
+			if r.FormValue("csrf") != csrf {
+				http.Error(w, "forbidden (stale page: reload the settings page and try again)", http.StatusForbidden)
+				return
+			}
+		}
+		h(w, r)
+	}
+}
+
+func masked(t string) string {
+	if len(t) < 12 {
+		return "pk_…"
+	}
+	return "saved: " + t[:7] + "…" + t[len(t)-4:] + "  (paste a new one to change it)"
+}
+
 func settingsServer() {
 	ln, err := net.Listen("tcp", settings)
 	if err != nil {
 		return
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", guard(func(w http.ResponseWriter, r *http.Request) {
 		auto := ""
 		if cfg.Autostart {
 			auto = "checked"
@@ -665,20 +708,25 @@ func settingsServer() {
 		if !nativeMode() {
 			en, ed = "", "checked"
 		}
-		p := strings.NewReplacer("{{TOKEN}}", cfg.Token, "{{IDLE}}", fmt.Sprint(cfg.IdleMinutes), "{{AUTO}}", auto, "{{ENG_N}}", en, "{{ENG_D}}", ed).Replace(page)
+		p := strings.NewReplacer("{{TOKEN}}", masked(cfg.Token), "{{CSRF}}", csrf, "{{IDLE}}", fmt.Sprint(cfg.IdleMinutes), "{{AUTO}}", auto, "{{ENG_N}}", en, "{{ENG_D}}", ed).Replace(page)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Frame-Options", "DENY")
 		io.WriteString(w, p)
-	})
-	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("/state", guard(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		b, _ := json.Marshal(state)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(b)
-	})
+	}))
 	save := func(r *http.Request) {
 		r.ParseForm()
-		cfg.Token = strings.TrimSpace(r.FormValue("token"))
+		if t := strings.TrimSpace(r.FormValue("token")); t != "" { // empty = keep the saved one (the field shows it masked)
+			cfg.Token = t
+		}
 		fmt.Sscanf(r.FormValue("idle"), "%d", &cfg.IdleMinutes)
 		if cfg.IdleMinutes < 1 {
 			cfg.IdleMinutes = 5
@@ -693,9 +741,18 @@ func settingsServer() {
 		setAutostart(cfg.Autostart)
 		saveConfig()
 	}
-	mux.HandleFunc("/save", func(w http.ResponseWriter, r *http.Request) { save(r); http.Redirect(w, r, "/", 303) })
-	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) { save(r); go startWorker(); http.Redirect(w, r, "/", 303) })
-	mux.HandleFunc("/stop", func(w http.ResponseWriter, r *http.Request) { go stopWorker(); http.Redirect(w, r, "/", 303) })
+	post := func(h http.HandlerFunc) http.HandlerFunc { // the three actions: POST only, through the guard
+		return guard(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "POST" {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			h(w, r)
+		})
+	}
+	mux.HandleFunc("/save", post(func(w http.ResponseWriter, r *http.Request) { save(r); http.Redirect(w, r, "/", 303) }))
+	mux.HandleFunc("/start", post(func(w http.ResponseWriter, r *http.Request) { save(r); go startWorker(); http.Redirect(w, r, "/", 303) }))
+	mux.HandleFunc("/stop", post(func(w http.ResponseWriter, r *http.Request) { go stopWorker(); http.Redirect(w, r, "/", 303) }))
 	http.Serve(ln, mux)
 }
 

@@ -10,6 +10,8 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -74,6 +76,12 @@ type nativeEngine struct {
 }
 
 var native = &nativeEngine{per: map[int]gpuStat{}, t0: time.Now()}
+
+// one token runs ONE kind of worker (this app is always a GPU worker); wid names this process so several PCs on
+// one token are counted and shown separately by the pool
+const myTier = "gpu"
+
+var wid = func() string { b := make([]byte, 4); rand.Read(b); return hex.EncodeToString(b) }()
 
 func (n *nativeEngine) logf(f string, a ...any) {
 	n.mu.Lock()
@@ -383,7 +391,7 @@ func (n *nativeEngine) dpLoop() {
 			ver = str(n.job["version"])
 		}
 		n.mu.Unlock()
-		code, r := poolCall("/api/worker/dps", map[string]any{"version": ver, "dps": batch}, 60*time.Second)
+		code, r := poolCall("/api/worker/dps", map[string]any{"version": ver, "dps": batch, "tier": myTier, "wid": wid}, 60*time.Second)
 		last = time.Now()
 		switch {
 		case code == 200:
@@ -393,8 +401,13 @@ func (n *nativeEngine) dpLoop() {
 				n.found = true
 			}
 			n.mu.Unlock()
-		case code == 400:
+		case code == 400 || code == 409:
 			n.logf("the pool rejected a DP batch (%v); dropping it", r["error"])
+			if code == 409 { // the token changed tier under us: the main loop stops and re-asks
+				n.mu.Lock()
+				n.susp = fmt.Sprint(r["error"])
+				n.mu.Unlock()
+			}
 		default:
 			n.mu.Lock()
 			n.dpq = append(batch, n.dpq...)
@@ -423,14 +436,14 @@ func (n *nativeEngine) heartbeatLoop() {
 		running := n.running
 		n.mu.Unlock()
 		if running {
-			code, r := poolCall("/api/worker/heartbeat", map[string]any{"gpus": gpus, "jps": jps, "uptime": time.Since(n.t0).Seconds(), "kangs": kangs, "loops": loops}, 20*time.Second)
+			code, r := poolCall("/api/worker/heartbeat", map[string]any{"gpus": gpus, "jps": jps, "uptime": time.Since(n.t0).Seconds(), "kangs": kangs, "loops": loops, "tier": myTier, "wid": wid}, 20*time.Second)
 			n.mu.Lock()
 			if code == 200 {
 				n.hb = r
 				if b, _ := r["found"].(bool); b {
 					n.found = true
 				}
-			} else if code == 401 || code == 403 {
+			} else if code == 401 || code == 403 || code == 409 {
 				n.susp = fmt.Sprint(r["error"])
 			}
 			n.mu.Unlock()
@@ -452,11 +465,11 @@ func (n *nativeEngine) fetchJob() (map[string]any, bool) {
 		if stopping {
 			return nil, false
 		}
-		code, j := poolCall("/api/worker/job", nil, 20*time.Second)
+		code, j := poolCall("/api/worker/job?tier="+myTier, nil, 20*time.Second)
 		if code == 200 && str(j["pubkey"]) != "" && num(j["range"]) > 0 {
 			return j, true
 		}
-		if code == 401 || code == 403 {
+		if code == 401 || code == 403 || code == 409 { // 409: the token is in use by a phone / CPU worker: it needs its own token
 			setErr(fmt.Sprintf("The pool refused this token (%v). Check it on your account page.", j["error"]))
 			n.logf("token refused (%v); retrying in 60 s", j["error"])
 			time.Sleep(60 * time.Second)
@@ -574,6 +587,19 @@ func (n *nativeEngine) agent() {
 			}
 			if v := str(hb["job_version"]); v != "" && v != str(job["version"]) {
 				n.logf("target changed %s -> %s: restarting", str(job["version"]), v)
+				n.killAll()
+				job, ok = n.fetchJob()
+				if !ok {
+					return
+				}
+				switched = true
+				break
+			}
+			if b, _ := hb["restart"].(bool); b { // the console's Restart button, passed through by the pool
+				n.logf("the pool asked this worker to restart: restarting the solver")
+				n.mu.Lock()
+				n.hb = nil
+				n.mu.Unlock()
 				n.killAll()
 				job, ok = n.fetchJob()
 				if !ok {

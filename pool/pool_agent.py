@@ -18,7 +18,7 @@ Only the Python standard library. Environment: POOL_URL (default https://pool.ko
 KANG_ARGS (extra kangaroo options), KANG_RC=auto|cubin|cuda|off, POWER_CAP_PERCENT (60), KANG_THREADS (CPU mode: threads, 0 = all cores), KANG_CPU=1 (testing without
 a GPU), HEARTBEAT_S (15).
 """
-import collections, json, os, re, shlex, signal, subprocess, sys, threading, time, urllib.request, urllib.error
+import collections, json, os, re, secrets, shlex, signal, subprocess, sys, threading, time, urllib.request, urllib.error
 
 APP = os.path.dirname(os.path.abspath(__file__))
 POOL_URL = os.environ.get("POOL_URL", "https://pool.kova23.com").rstrip("/")
@@ -26,6 +26,7 @@ TOKEN = os.environ.get("POOL_TOKEN", "").strip()
 BIN = os.environ.get("KANG_BIN", os.path.join(APP, "kangaroo"))
 CPU_MODE = os.environ.get("KANG_CPU", "0") == "1"
 MY_TIER = "cpu" if CPU_MODE else "gpu"       # told to the pool on every call: a token runs ONE tier (a phone and a GPU need separate tokens)
+WID = secrets.token_hex(4)                   # this worker process, so several machines on one token are counted (and shown) separately
 EXTRA = shlex.split(os.environ.get("KANG_ARGS", ""))
 RC_MODE = os.environ.get("KANG_RC", "auto")
 CUBIN_URL = os.environ.get("KANG_CUBIN_URL", "")   # test a kernel build without a new image: downloaded once, passed as --rc-cubin
@@ -141,7 +142,7 @@ def dp_loop():
         if not n or (n < BATCH_MAX and time.time() - last < BATCH_S): continue
         with dpq_lock: batch = [dpq.popleft() for _ in range(min(n, BATCH_MAX))]
         with st_lock: ver = (st["job"] or {}).get("version", "")
-        code, r = call("/api/worker/dps", {"version": ver, "dps": batch, "tier": MY_TIER}, timeout=60)
+        code, r = call("/api/worker/dps", {"version": ver, "dps": batch, "tier": MY_TIER, "wid": WID}, timeout=60)
         if code == 200:
             with st_lock:
                 st["sent"] += len(batch)
@@ -234,7 +235,7 @@ def heartbeat_loop(gpus):
         with st_lock:
             jps = sum(v.get("jumps", 0) for v in st["per"].values())
             kangs = sum(v.get("kangs", 0) for v in st["per"].values()); loops = sum(v.get("loops", 0) for v in st["per"].values())
-        hb_payload = {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops, "tier": MY_TIER}
+        hb_payload = {"gpus": gpus, "jps": jps, "uptime": time.time() - T0, "kangs": kangs, "loops": loops, "tier": MY_TIER, "wid": WID}
         if time.time() - T0 < 2 * HEARTBEAT_S: hb_payload["host"] = host_info()[:300]; hb_payload["machine"] = os.environ.get("SALAD_MACHINE_ID", "")[:64]
         code, r = call("/api/worker/heartbeat", hb_payload)
         if code == 200:
@@ -251,7 +252,7 @@ def main():
         log("POOL_TOKEN must be set (make one on your account page at " + POOL_URL + ")"); sys.exit(2)
     if not os.path.exists(BIN) and not CPU_MODE: log(f"kangaroo binary not found at {BIN}"); sys.exit(2)
     gpus = gpu_list()
-    log(f"pool {POOL_URL} | token {TOKEN[:10]}... | {len(gpus)} GPU(s): {', '.join(gpus)}")
+    log(f"pool {POOL_URL} | token {TOKEN[:10]}... | worker {WID} | {len(gpus)} GPU(s): {', '.join(gpus)}")
     if CUBIN_URL and not CPU_MODE:
         dst = os.path.join(APP, "rc", "override.cubin")
         try:
@@ -293,6 +294,10 @@ def main():
                 stop(procs); break
             if hb.get("job_version") and hb["job_version"] != job["version"]:
                 log(f"target changed {job['version']} -> {hb['job_version']}: restarting")
+                stop(procs); job = fetch_job(); switched = True; break
+            if hb.get("restart"):                                    # the console's Restart button, passed through by the pool
+                log("the pool asked this worker to restart: restarting the solver")
+                with st_lock: st["hb"] = None
                 stop(procs); job = fetch_job(); switched = True; break
             if hb.get("power") and hb["power"] != st["power"]:
                 with st_lock: st["power"] = hb["power"]
