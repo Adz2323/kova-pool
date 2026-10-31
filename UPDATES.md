@@ -4,6 +4,22 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-10-31 — share dp follows the herd; 1 tame : 2 wild; kangaroo counts
+
+After two kangaroos meet, the merged trail has to walk on to its next share point before the pool can see the meeting:
+about 2^dp jumps, wasted. Across a herd that is kangaroos × 2^dp / √N of extra work, so the right share dp *falls* as
+the herd grows. The pool now keeps that overhead under 5 %: the GPU tier's share dp starts at 40 and steps down one
+bit at a time as the herd grows (back up as it shrinks, never below 34). Every lower level is a superset of the higher
+one, so nothing handed in stops matching, and a share is worth 2^(the dp in force when it was handed in): the pay per
+jump does not change. With today's herd nothing moves; the rule is there for when it is fifty times bigger.
+
+Worker side ([commits](https://github.com/Adz2323/kova-pool/commits/main)): the heartbeat reply carries `cand_dp` and
+`share_dp`, and `pool_agent.py`, `KovaPool` (`native.go`) and the phone page retune their share filter in place when
+it changes — `share points are now dp 39 (was 40): the herd changed size; nothing to restart`. The agent reports the
+solver's kangaroo count (`kangs`) so the pool sizes the herd from numbers rather than guesses. Old workers keep
+working: their filter stays at the dp they started with, which is always at least as strict as the pool's, so their
+points are accepted; they just hand in fewer of them until updated. Also on the pool: new tokens are assigned so the
+herd runs one tame to two wild, the split RCKangaroo's walk is tuned for (existing tokens keep their species).
 ## 2026-10-31 — expected vs credited shares on your account page
 
 Every token now shows, next to its shares, what it *should* have earned: the speed your worker reports × the seconds

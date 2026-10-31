@@ -171,6 +171,10 @@ async function heartbeat() {
   const [code, r] = await api("/api/worker/heartbeat", { gpus: ["Phone/browser: " + (navigator.platform || "?") + " x" + workers.length], jps: jps(), uptime: (Date.now() - t0) / 1000, kangs, loops: loops(), tier: "cpu" });
   if (code === 200 && r.job_version && r.job_version !== job.version) restart("the pool moved to a new job");
   else if (code === 401 || code === 403 || code === 409) { say("The pool refused this token: " + (r.error || code), "bad"); stop(); }
+  else if (code === 200 && r.share_dp && Number(r.share_dp) !== Number(job.share_dp || job.dp)) {   // the pool tunes the share dp to the herd's size
+    logln("share points are now dp " + r.share_dp + " (was " + (job.share_dp || job.dp) + "): the herd changed size");
+    job.share_dp = Number(r.share_dp); workers.forEach(w => { try { w.postMessage({ type: "share_dp", cand_dp: job.cand_dp || job.dp, share_dp: job.share_dp }); } catch (e) {} });
+  }
 }
 function tick() { if (!running) return; $("#s-jps").textContent = fmt(jps()); $("#s-dps").textContent = String(sent); const s = Math.floor((Date.now() - t0) / 1000); $("#s-up").textContent = Math.floor(s / 3600) + ":" + String(Math.floor(s / 60) % 60).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); }
 function stop() {

@@ -33,6 +33,12 @@ worker never holds both trails of a collision; wild workers start from a point t
 points go to the pool, which verifies a sample by re-deriving them, and the key, if found, is derived on the pool's
 server. The worker never touches a wallet.
 
+The solver runs at dp 32 and the worker hands in only **share points**, the rarer ones the pool pays for. The pool
+sets that rarity to the size of the herd (dp 40 with today's herd, lower as it grows, never below 34) and tells the
+worker the level in every heartbeat; the worker retunes its filter in place (`share points are now dp 39 (was 40)`),
+no restart, and every point already handed in keeps counting. It also reports how many kangaroos it runs, which is
+what the pool sizes the herd by.
+
 ## No GPU? The CPU worker
 
 `kangaroo/cpu/kangaroo_cpu.cpp` is the same walk in plain C++ (no CUDA): it runs the pool's graph on a Mac, a Linux

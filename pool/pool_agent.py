@@ -248,6 +248,7 @@ def heartbeat_loop(gpus):
         time.sleep(HEARTBEAT_S)
 
 def main():
+    global SHARE_MASK
     if len(TOKEN) < 20 or not TOKEN.startswith("pk_"):
         log("POOL_TOKEN must be set (make one on your account page at " + POOL_URL + ")"); sys.exit(2)
     if not os.path.exists(BIN) and not CPU_MODE: log(f"kangaroo binary not found at {BIN}"); sys.exit(2)
@@ -265,7 +266,6 @@ def main():
     threading.Thread(target=dp_loop, daemon=True).start()
     job = fetch_job()
     while True:
-        global SHARE_MASK
         SHARE_MASK = share_mask(job)
         with st_lock: st["job"] = job; st["power"] = job.get("power", "full"); st["mode"] = job.get("mode", "pooled"); st["suspended"] = ""
         log(f"target {job['pubkey'][:20]}... range 2^{job['range']} dp {job.get('cand_dp') or job['dp']} (share points: dp {job.get('share_dp') or job['dp']}) | species {job['species']}{' (blinded)' if job.get('blind') else ''} | "
@@ -305,6 +305,9 @@ def main():
             if hb.get("mode") and hb["mode"] != st["mode"]:
                 with st_lock: st["mode"] = hb["mode"]
                 log(f"mode is now {hb['mode']}")
+            if hb.get("share_dp") and int(hb["share_dp"]) != int(job.get("share_dp") or 0):    # the pool tunes the share dp to the herd's size
+                log(f"share points are now dp {hb['share_dp']} (was {job.get('share_dp')}): the herd changed size; nothing to restart")
+                job["share_dp"] = int(hb["share_dp"]); SHARE_MASK = share_mask(job)
         if switched: continue
         if st["found"]:
             while True:

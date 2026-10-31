@@ -620,6 +620,17 @@ func (n *nativeEngine) agent() {
 				state.Mode = m
 				mu.Unlock()
 			}
+			if sd := numOr(hb["share_dp"], 0); sd > 0 && sd != numOr(job["share_dp"], num(job["dp"])) { // the pool tunes the share dp to the herd's size
+				n.logf("share points are now dp %d (was %d): the herd changed size; nothing to restart", sd, numOr(job["share_dp"], num(job["dp"])))
+				job["share_dp"] = float64(sd)
+				n.mu.Lock()
+				if extra := sd - numOr(job["cand_dp"], num(job["dp"])); extra > 0 {
+					n.shareMsk = (uint64(1) << uint(extra)) - 1
+				} else {
+					n.shareMsk = 0
+				}
+				n.mu.Unlock()
+			}
 		}
 		if switched {
 			continue

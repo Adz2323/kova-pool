@@ -1,5 +1,5 @@
 // phone-worker.js: one Web Worker = one group of 24 kangaroos in kangaroo.wasm (kangaroo/cpu/kangaroo_wasm.cpp).
-// Messages in:  {type:"start", job, species (0 tame, 1 wild, 2 both), seed}   {type:"stop"}
+// Messages in:  {type:"start", job, species (0 tame, 1 wild, 2 both), seed}   {type:"stop"}   {type:"share_dp", cand_dp, share_dp}
 // Messages out: {type:"ready"} {type:"stats", jumps, loops, regen} {type:"dps", lines:[...]} {type:"error", text}
 let ex = null, running = false, shareMask = 0n, nt = 24, jumps = 0;
 const hex = v => v.toString(16).padStart(16, "0");
@@ -9,14 +9,17 @@ async function load() {
   const { instance } = await WebAssembly.instantiate(await r.arrayBuffer(), {});
   ex = instance.exports; postMessage({ type: "ready" });
 }
+function setShare(cand, share) {                       // share points = candidates whose next (share - cand) bits of x are zero too
+  cand = Number(cand || 32); share = Number(share || 32);
+  shareMask = share > cand ? (1n << BigInt(share - cand)) - 1n : 0n;
+}
 function start(job, species, seed) {
   const mem = new BigUint64Array(ex.memory.buffer); const off = Number(ex.kw_buf()) / 8;
   for (let i = 0; i < 16; i++) mem[off + i] = 0n;
   words(job.pubkey.slice(2), off, mem); mem[off + 4] = job.pubkey.startsWith("03") ? 1n : 0n;
   const st = BigInt("0x" + (job.start || "0")); for (let i = 0; i < 4; i++) mem[off + 5 + i] = (st >> BigInt(64 * i)) & 0xFFFFFFFFFFFFFFFFn;
   if (species === 1 && job.blind) { words(job.blind.slice(2), off + 9, mem); mem[off + 13] = job.blind.startsWith("03") ? 1n : 0n; mem[off + 14] = 1n; }
-  const cand = Number(job.cand_dp || job.dp || 32), share = Number(job.share_dp || job.dp || 32);
-  shareMask = share > cand ? (1n << BigInt(share - cand)) - 1n : 0n;
+  setShare(job.cand_dp || job.dp, job.share_dp || job.dp);
   const rc = ex.kw_init(Number(job.range), cand, species, BigInt(seed[0]), BigInt(seed[1]));
   if (rc) { postMessage({ type: "error", text: "init failed (" + rc + ")" }); return; }
   nt = ex.kw_nt(); running = true; jumps = 0; loop();
@@ -41,5 +44,6 @@ onmessage = e => {
   const m = e.data;
   if (m.type === "start") { if (!ex) { postMessage({ type: "error", text: "wasm not loaded" }); return; } start(m.job, m.species, m.seed); }
   else if (m.type === "stop") running = false;
+  else if (m.type === "share_dp") setShare(m.cand_dp, m.share_dp);
 };
 load().catch(err => postMessage({ type: "error", text: String(err) }));
