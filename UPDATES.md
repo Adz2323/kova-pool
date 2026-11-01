@@ -4,6 +4,19 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-11-01 — the whole share ledger is public
+
+Until now you could see your own shares and the pool total. Now the entire ledger is on the site: every member's
+verified points, shares and fraction of the pool, live, under **Ledger** (pool.kova23.com/#/ledger). The canonical
+file is `/ledger.json` with its SHA-256 shown on the page, and the pool writes one snapshot per UTC day, listed with
+hashes, so a saved copy can be compared with a later one and a quietly rewritten past would not match. The page says
+how to recompute the fractions (they must sum to 1). These are exactly the rows the published payout script pays from.
+
+Names on the board and ledger are your display name or an anonymous `member-xxxx`. Payout addresses are never shown
+there, and a display name that is or contains a Bitcoin address is now refused (an address tied to an account is
+personal data, and a public list of payout addresses is a phishing list). Addresses appear only in the payout
+transaction itself, matched to the same labels, when it exists. Server-side change; nothing to update on a worker.
+
 ## 2026-10-31 — share dp follows the herd; 1 tame : 2 wild; kangaroo counts
 
 After two kangaroos meet, the merged trail has to walk on to its next share point before the pool can see the meeting:
