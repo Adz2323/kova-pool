@@ -10,7 +10,10 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -37,6 +40,7 @@ const (
 )
 
 var buildSHA = "dev" // set by the workflow: -X main.buildSHA=<sha>
+var signPub = ""     // base64 Ed25519 public key of the release signing key: -X main.signPub=<key> (tools/sign -pub)
 
 var (
 	ntdll        = syscall.NewLazyDLL("ntdll.dll")
@@ -124,7 +128,54 @@ func poolCall(path string, payload any, timeout time.Duration) (int, map[string]
 	return r.StatusCode, j
 }
 
-// ---- solver download: kangaroo-windows.zip + VERSION.txt from the rolling release; re-fetched when VERSION changes
+// ---- solver download: kangaroo-windows.zip + VERSION.txt from the rolling release; re-fetched when VERSION changes.
+// The release is a mutable tag, so nothing from it runs unverified: the workflow signs SHA256SUMS (the hashes of the
+// zip and of VERSION.txt) with the release key, this exe carries the matching public key (signPub, injected at build
+// time), and a zip whose hash is not in a validly signed SHA256SUMS is deleted, not unpacked.
+func fetchSmall(c *http.Client, name string) ([]byte, error) {
+	r, err := c.Get(releaseBase + name)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return nil, fmt.Errorf("%s: HTTP %d", name, r.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(r.Body, 1<<20))
+}
+
+// verifySums checks the Ed25519 signature over SHA256SUMS and returns file -> sha256 hex
+func verifySums(sums, sig []byte) (map[string]string, error) {
+	pk, err := base64.StdEncoding.DecodeString(signPub)
+	if err != nil || len(pk) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("this KovaPool build carries no release key: download KovaPool.exe from the release page")
+	}
+	sg, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sig)))
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(pk), sums, sg) {
+		return nil, fmt.Errorf("the release's signature does not verify: NOT installing it (tell the pool)")
+	}
+	m := map[string]string{}
+	for _, ln := range strings.Split(string(sums), "\n") {
+		if f := strings.Fields(ln); len(f) == 2 {
+			m[strings.TrimPrefix(f[1], "*")] = strings.ToLower(f[0])
+		}
+	}
+	return m, nil
+}
+
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 func (n *nativeEngine) ensureSolver() error {
 	n.dir = filepath.Join(os.Getenv("LOCALAPPDATA"), appName, "solver")
 	os.MkdirAll(n.dir, 0o700)
@@ -132,18 +183,32 @@ func (n *nativeEngine) ensureSolver() error {
 	have, _ := os.ReadFile(filepath.Join(n.dir, "VERSION.txt"))
 	c := &http.Client{Timeout: 30 * time.Second}
 	want := ""
-	if r, err := c.Get(releaseBase + "VERSION.txt"); err == nil && r.StatusCode == 200 {
-		b, _ := io.ReadAll(r.Body)
-		r.Body.Close()
-		want = strings.TrimSpace(string(b))
+	verRaw, verErr := fetchSmall(c, "VERSION.txt")
+	if verErr == nil {
+		want = strings.TrimSpace(string(verRaw))
 	}
 	if _, err := os.Stat(exe); err == nil && (want == "" || want == strings.TrimSpace(string(have))) {
 		return nil
 	}
-	if want == "" {
+	if want == "" || len(want) < 8 {
 		return fmt.Errorf("the solver isn't downloaded yet and the download site can't be reached (github.com)")
 	}
-	n.logf("downloading the solver (kangaroo-windows.zip, build %s)…", want[:8])
+	sums, err := fetchSmall(c, "SHA256SUMS")
+	if err != nil {
+		return fmt.Errorf("release checksums missing (%v)", err)
+	}
+	sig, err := fetchSmall(c, "SHA256SUMS.sig")
+	if err != nil {
+		return fmt.Errorf("release signature missing (%v)", err)
+	}
+	hashes, err := verifySums(sums, sig)
+	if err != nil {
+		return err
+	}
+	if h := sha256.Sum256(verRaw); hex.EncodeToString(h[:]) != hashes["VERSION.txt"] {
+		return fmt.Errorf("VERSION.txt does not match the signed checksums: NOT installing it")
+	}
+	n.logf("downloading the solver (kangaroo-windows.zip, build %s, signed)…", want[:8])
 	mu.Lock()
 	state.Status = "downloading the solver (first time, ~40 MB)…"
 	mu.Unlock()
@@ -162,6 +227,10 @@ func (n *nativeEngine) ensureSolver() error {
 		return err
 	}
 	f.Close()
+	if got, err := sha256File(tmp); err != nil || got != hashes["kangaroo-windows.zip"] {
+		os.Remove(tmp)
+		return fmt.Errorf("the solver zip does not match the signed checksums: deleted, NOT installed (tell the pool)")
+	}
 	z, err := zip.OpenReader(tmp)
 	if err != nil {
 		return fmt.Errorf("bad solver zip: %v", err)
@@ -195,7 +264,7 @@ func (n *nativeEngine) ensureSolver() error {
 	z.Close()
 	os.Remove(tmp)
 	os.WriteFile(filepath.Join(n.dir, "VERSION.txt"), []byte(want), 0o600)
-	n.logf("solver ready")
+	n.logf("solver ready (build %s, signature verified)", want[:8])
 	return nil
 }
 

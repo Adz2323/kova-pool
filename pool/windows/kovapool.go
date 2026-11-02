@@ -43,8 +43,9 @@ type Config struct {
 	PoolURL     string `json:"pool_url"`
 	IdleMinutes int    `json:"idle_minutes"`
 	Autostart   bool   `json:"autostart"`
-	Enabled     bool   `json:"enabled"` // start the worker when the app starts
-	Engine      string `json:"engine"`  // "native" (kangaroo.exe, default) or "docker" (Docker Desktop)
+	Enabled     bool   `json:"enabled"`    // start the worker when the app starts
+	Engine      string `json:"engine"`     // "native" (kangaroo.exe, default) or "docker" (Docker Desktop)
+	LastPower   string `json:"last_power"` // the pool's power mode last seen: decides whether the Docker worker gets CAP_SYS_ADMIN
 }
 
 func nativeMode() bool { return cfg.Engine != "docker" }
@@ -394,8 +395,15 @@ func startWorker() {
 		setErr("Could not download the worker image: " + last(out))
 		return
 	}
-	out, err := run("docker", "run", "-d", "--name", container, "--gpus", "all", "--restart", "unless-stopped", "--cap-add", "SYS_ADMIN",
-		"-e", "POOL_TOKEN="+cfg.Token, "-e", "POOL_URL="+cfg.PoolURL, image)
+	args := []string{"run", "-d", "--name", container, "--gpus", "all", "--restart", "unless-stopped"}
+	if cfg.LastPower == "gentle" || cfg.LastPower == "idle" {
+		// only the power cap (nvidia-smi -pl inside the container) needs CAP_SYS_ADMIN; at full power the worker runs
+		// as an ordinary container, so a bad image is no road to the host. Without the cap the agent falls back to
+		// its duty cycle for gentle. The mode comes from the pool (account page); a change restarts the worker.
+		args = append(args, "--cap-add", "SYS_ADMIN")
+	}
+	args = append(args, "-e", "POOL_TOKEN="+cfg.Token, "-e", "POOL_URL="+cfg.PoolURL, image)
+	out, err := run("docker", args...)
 	if err != nil {
 		if strings.Contains(out, "could not select device driver") || strings.Contains(out, "nvidia") {
 			setErr("Docker can't see the GPU. Make sure Docker Desktop uses the WSL 2 backend and the NVIDIA driver is current. Details: " + last(out))
@@ -546,7 +554,18 @@ func supervise() {
 				state.Species, _ = j["species"].(string)
 				state.Mode, _ = j["mode"].(string)
 				state.Power, _ = j["power"].(string)
+				power := state.Power
 				mu.Unlock()
+				if power != "" && power != cfg.LastPower {
+					prev := cfg.LastPower
+					cfg.LastPower = power
+					saveConfig()
+					// Docker: the cap is decided at `docker run`, so a move between full and gentle/idle restarts the container
+					if !nativeMode() && running && (prev == "gentle" || prev == "idle") != (power == "gentle" || power == "idle") {
+						stopWorker()
+						startWorker()
+					}
+				}
 			} else {
 				mu.Lock()
 				state.LastErr = "pool: " + err.Error()
@@ -645,12 +664,19 @@ button{background:#0F7C78;color:#fff;border:0;border-radius:6px;padding:.6rem 1r
 </form>
 <div class="box"><h3 style="margin-top:0">Worker log</h3><pre id="log">…</pre></div>
 <script>
-async function tick(){const r=await fetch('/state');const s=await r.json();
-document.getElementById('status').innerHTML=(s.LastErr?'<div class="bad">'+s.LastErr+'</div>':'')+
-(s.Engine==='docker'?'<p>Docker Desktop: <span class="'+(s.Docker?'ok">running':'no">not running')+'</span> · ':'<p>Engine: built-in solver · ')+'NVIDIA GPU: <span class="'+(s.GPU?'ok">found':'no">not found')+'</span></p>'+
-'<p>Worker: <b>'+s.Status+'</b>'+(s.Species?' · species <span class="pill '+s.Species+'">'+s.Species+'</span> · mode '+s.Mode+' · power '+s.Power:'')+'</p>'+
-(s.Engine==='docker'&&!s.Docker?'<p>Install <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a> (keep the WSL 2 backend it suggests) and the current <a href="https://www.nvidia.com/drivers">NVIDIA driver</a>, then come back here and click Start.</p>':'')+
-(!s.GPU?'<p>No NVIDIA GPU seen: install the current <a href="https://www.nvidia.com/drivers">NVIDIA driver</a>.</p>':'');
+// everything from /state is text (textContent), never markup: the status strings come from the pool server
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function link(href,text){const a=el('a',null,text);a.href=href;return a}
+async function tick(){const r=await fetch('/state');const s=await r.json();const st=document.getElementById('status');st.textContent='';
+if(s.LastErr)st.appendChild(el('div','bad',s.LastErr));
+let p=el('p');
+if(s.Engine==='docker'){p.append('Docker Desktop: ');p.appendChild(el('span',s.Docker?'ok':'no',s.Docker?'running':'not running'));p.append(' · ')}else p.append('Engine: built-in solver · ');
+p.append('NVIDIA GPU: ');p.appendChild(el('span',s.GPU?'ok':'no',s.GPU?'found':'not found'));st.appendChild(p);
+p=el('p');p.append('Worker: ');p.appendChild(el('b',null,s.Status||''));
+if(s.Species){const sp=['tame','wild','both'].includes(s.Species)?s.Species:'';p.append(' · species ');p.appendChild(el('span','pill '+sp,s.Species));p.append(' · mode '+(s.Mode||'')+' · power '+(s.Power||''))}
+st.appendChild(p);
+if(s.Engine==='docker'&&!s.Docker){p=el('p');p.append('Install ');p.appendChild(link('https://www.docker.com/products/docker-desktop/','Docker Desktop'));p.append(' (keep the WSL 2 backend it suggests) and the current ');p.appendChild(link('https://www.nvidia.com/drivers','NVIDIA driver'));p.append(', then come back here and click Start.');st.appendChild(p)}
+if(!s.GPU){p=el('p');p.append('No NVIDIA GPU seen: install the current ');p.appendChild(link('https://www.nvidia.com/drivers','NVIDIA driver'));p.append('.');st.appendChild(p)}
 document.getElementById('log').textContent=s.Log||'(no output yet)';}
 tick();setInterval(tick,3000);
 </script>`

@@ -4,6 +4,30 @@ What changed, when, and what it means for a member. Newest first. Each entry nam
 worker side (solver, agent, Windows app, Docker image) is in this repository, the pool server is not public, so
 server-side changes are described here rather than linked.
 
+## 2026-11-02 — weekly security review: signed Windows releases, no SYS_ADMIN by default, meetings re-derived
+
+From the first weekly security review of the pool (advisories + a re-read of the code), four changes that touch members:
+
+**Windows releases are signed.** `KovaPool.exe` downloads `kangaroo-windows.zip` from a rolling GitHub release, which
+anyone who could write that release could have swapped. The workflow now publishes `SHA256SUMS` and `SHA256SUMS.sig`
+(Ed25519, `pool/windows/tools/sign`), the exe carries the matching public key, and a zip whose hash is not in a
+validly signed `SHA256SUMS` is deleted, never unpacked. Update: download the new `KovaPool.exe` once; after that the
+app only ever installs signed solvers. An older `KovaPool.exe` keeps running what it has and would still take an
+unsigned download, so do replace it.
+
+**Docker mode runs without `CAP_SYS_ADMIN` at full power.** The container only needs it for the power cap in gentle /
+idle mode (`nvidia-smi -pl`), so the Windows app adds the capability only then (and restarts the container when the
+mode changes on your account page). A worker at full power is now an ordinary container. `join.sh` / `cpu.sh` never
+added it.
+
+**The settings page writes status as text, not HTML.** Strings the pool sends (status, error, species, mode) were
+inserted as markup on `127.0.0.1:47716`; a hostile reply could have run script there. They are plain text now.
+
+**Meetings are re-derived before they count.** When a second line arrives for an x the share table already holds, the
+pool now verifies both lines (a genuine point of the walk) before forwarding the pair to the console as a meeting.
+Replaying one of your own x values with a made-up distance suspends the token, as a forged point always did. A real
+meeting is unaffected. Server-side; nothing to update on a worker.
+
 ## 2026-11-01 — the whole share ledger is public
 
 Until now you could see your own shares and the pool total. Now the entire ledger is on the site: every member's

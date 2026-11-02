@@ -3,7 +3,8 @@
 A tray app for people who want to lend a Windows gaming PC to the pool without touching a terminal. Two engines:
 
 - **Built-in solver (default, no Docker):** downloads `kangaroo.exe` (built by the `windows-worker` GitHub Actions
-  workflow from the same `kangaroo.cu`, published on the rolling release `windows-latest`) into
+  workflow from the same `kangaroo.cu`, published on the rolling release `windows-latest`, signed: the workflow publishes
+  `SHA256SUMS` + `SHA256SUMS.sig` made with the repo's Ed25519 release key and the exe only installs a zip that verifies) into
   `%LOCALAPPDATA%\KovaPool\solver` and runs it directly. `native.go` is a Go port of `pool_agent.py` (job, DP
   streaming, heartbeat, restart on target change, stop on find); pause/resume use NtSuspendProcess/NtResumeProcess.
 - **Docker Desktop (WSL 2):** runs the `adz23/kova-pool` image, same as Linux.

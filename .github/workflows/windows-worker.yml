@@ -10,6 +10,10 @@ on:
   workflow_dispatch:
 # Every action is pinned to a commit (the rolling release below is what every KovaPool.exe downloads and runs, so a
 # hijacked action tag must not be able to publish into it); bump the pins by hand or with `gh actions-lock`.
+# The release is signed: SHA256SUMS (zip + VERSION.txt) and SHA256SUMS.sig, made by pool/windows/tools/sign with the
+# repo secret KOVAPOOL_SIGN_KEY (Ed25519, PKCS#8 PEM: `openssl genpkey -algorithm ed25519 -out kovapool-sign.pem`).
+# KovaPool.exe embeds the matching public key and installs nothing that does not verify, so a hijacked token, action or
+# runner that can write the release still cannot ship code to members. The build fails without the secret.
 permissions:
   contents: write
 jobs:
@@ -78,10 +82,21 @@ jobs:
           foreach ($l in ($sl | Where-Object { $_ -notmatch "^DP " } | Select-Object -First 12)) { Write-Host "::notice title=dp stream output::$l" }
           if ($dp -lt 10) { Write-Host "::error title=dp stream::fewer than 10 DP lines"; exit 1 }
           exit 0   # the timed run exits 2 ("stopped without finding the key"), which is expected here
+      - name: Release signing key (public half for the exe)
+        shell: pwsh
+        working-directory: pool/windows
+        env:
+          KOVAPOOL_SIGN_KEY: ${{ secrets.KOVAPOOL_SIGN_KEY }}
+        run: |
+          if (-not $env:KOVAPOOL_SIGN_KEY) { Write-Host "::error title=signing::repo secret KOVAPOOL_SIGN_KEY is missing: openssl genpkey -algorithm ed25519 -out kovapool-sign.pem, then Settings > Secrets > Actions"; exit 1 }
+          $pub = (go run ./tools/sign -pub).Trim()
+          if ($LASTEXITCODE -or -not $pub) { exit 1 }
+          "SIGN_PUB=$pub" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "::notice title=release key::$pub"
       - name: Build KovaPool.exe
         shell: pwsh
         working-directory: pool/windows
-        run: go build -ldflags "-H windowsgui -s -w -X main.buildSHA=${{ github.sha }}" -o ../../build/KovaPool.exe .
+        run: go build -ldflags "-H windowsgui -s -w -X main.buildSHA=${{ github.sha }} -X main.signPub=$env:SIGN_PUB" -o ../../build/KovaPool.exe .
       - name: Package
         shell: pwsh
         run: |
@@ -93,6 +108,15 @@ jobs:
           Compress-Archive -Path dist/kangaroo.exe, dist/rc -DestinationPath dist/kangaroo-windows.zip -Force
           "${{ github.sha }}" | Out-File -NoNewline dist/VERSION.txt
           Get-ChildItem -Recurse dist | Format-Table Name, Length
+      - name: Sign the release (SHA256SUMS + SHA256SUMS.sig)
+        shell: pwsh
+        working-directory: pool/windows
+        env:
+          KOVAPOOL_SIGN_KEY: ${{ secrets.KOVAPOOL_SIGN_KEY }}
+        run: |
+          go run ./tools/sign ../../dist/kangaroo-windows.zip ../../dist/VERSION.txt
+          if ($LASTEXITCODE) { exit 1 }
+          Get-Content ../../dist/SHA256SUMS.sig
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with: { name: kova-pool-windows, path: dist/ }
       - name: Publish to the rolling release "windows-latest"
@@ -106,3 +130,5 @@ jobs:
             dist/KovaPool.exe
             dist/kangaroo-windows.zip
             dist/VERSION.txt
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
